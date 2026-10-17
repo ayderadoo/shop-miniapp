@@ -2,20 +2,173 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <title>Магазин</title>
+  <style>
+    :root {
+      --bg: var(--tg-theme-bg-color, #ffffff);
+      --bg2: var(--tg-theme-secondary-bg-color, #f2f2f7);
+      --text: var(--tg-theme-text-color, #111111);
+      --hint: var(--tg-theme-hint-color, #8e8e93);
+      --accent: var(--tg-theme-button-color, #ff5a1f);
+      --accent-text: var(--tg-theme-button-text-color, #ffffff);
+      --radius: 14px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg2); color: var(--text); padding-bottom: 24px;
+    }
+    header { background: var(--bg); padding: 14px 16px 10px; position: sticky; top: 0; z-index: 5; }
+    h1 { font-size: 22px; font-weight: 700; margin-bottom: 10px; }
+    .search {
+      width: 100%; border: none; outline: none; border-radius: 10px;
+      background: var(--bg2); color: var(--text); padding: 10px 12px; font-size: 16px;
+    }
+    .chips { display: flex; gap: 8px; overflow-x: auto; padding: 10px 0 2px; scrollbar-width: none; }
+    .chips::-webkit-scrollbar { display: none; }
+    .chip {
+      flex: none; border: none; border-radius: 999px; padding: 7px 14px; font-size: 14px;
+      background: var(--bg2); color: var(--text); cursor: pointer;
+    }
+    .chip.active { background: var(--accent); color: var(--accent-text); }
+    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 12px 16px; }
+    .card { background: var(--bg); border-radius: var(--radius); overflow: hidden; cursor: pointer; }
+    .img { width: 100%; aspect-ratio: 1; object-fit: cover; background: var(--bg2); display: block; }
+    .noimg { display: flex; align-items: center; justify-content: center; font-size: 34px; }
+    .info { padding: 8px 10px 10px; }
+    .price { font-weight: 700; font-size: 16px; }
+    .name { font-size: 13px; color: var(--text); margin-top: 3px; line-height: 1.3;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .state { text-align: center; color: var(--hint); padding: 40px 16px; font-size: 15px; }
+    /* Карточка товара */
+    .sheet { position: fixed; inset: 0; background: var(--bg); z-index: 10; overflow-y: auto;
+      transform: translateY(100%); transition: transform .25s ease; }
+    .sheet.open { transform: translateY(0); }
+    .sheet .img { aspect-ratio: 1; }
+    .sheet-body { padding: 16px; }
+    .sheet .price { font-size: 24px; }
+    .sheet h2 { font-size: 18px; font-weight: 600; margin: 6px 0 10px; }
+    .sheet .cat { color: var(--hint); font-size: 14px; margin-bottom: 12px; }
+    .sheet p { font-size: 15px; line-height: 1.5; white-space: pre-line; }
+  </style>
 </head>
 <body>
-  <h1>Магазин работает ✅</h1>
-  <p id="hello"></p>
+  <header>
+    <h1>Магазин</h1>
+    <input class="search" id="search" type="search" placeholder="Поиск товаров">
+    <div class="chips" id="chips"></div>
+  </header>
+  <main>
+    <div class="grid" id="grid"></div>
+    <div class="state" id="state">Загружаем товары…</div>
+  </main>
+
+  <div class="sheet" id="sheet">
+    <div id="sheetImg"></div>
+    <div class="sheet-body">
+      <div class="price" id="sheetPrice"></div>
+      <h2 id="sheetName"></h2>
+      <div class="cat" id="sheetCat"></div>
+      <p id="sheetDesc"></p>
+    </div>
+  </div>
+
   <script>
-    const tg = window.Telegram.WebApp;
-    tg.ready();
-    tg.expand();
-    const user = tg.initDataUnsafe.user;
-    document.getElementById("hello").textContent =
-      user ? "Привет, " + user.first_name + "!" : "Открыто не из Telegram";
+    // Публичные ключи Supabase: дают только чтение активных товаров
+    const SUPABASE_URL = "https://wtfeujuyklteisnrqksl.supabase.co";
+    const SUPABASE_KEY = "sb_publishable__g5mXUbkj8-pDwIjBJOpRg_gX6KHdpk";
+
+    const tg = window.Telegram?.WebApp;
+    tg?.ready();
+    tg?.expand();
+
+    let products = [];
+    let category = "Все";
+    let query = "";
+
+    const $ = (id) => document.getElementById(id);
+    const fmt = (n) => Number(n).toLocaleString("ru-RU").replace(/,/g, " ") + " сум";
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const imgHtml = (p) => p.photo
+      ? `<img class="img" src="${esc(p.photo)}" alt="" loading="lazy">`
+      : `<div class="img noimg">📦</div>`;
+
+    async function load() {
+      try {
+        const res = await fetch(
+          `${SUPABASE_URL}/rest/v1/products?select=*&active=eq.true&order=id.asc`,
+          { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
+        );
+        if (!res.ok) throw new Error(res.status);
+        products = await res.json();
+        renderChips();
+        render();
+      } catch (e) {
+        $("state").textContent = "Не удалось загрузить товары. Попробуйте позже.";
+      }
+    }
+
+    function renderChips() {
+      const cats = ["Все", ...new Set(products.map((p) => p.category).filter(Boolean))];
+      $("chips").innerHTML = cats.map((c) =>
+        `<button class="chip ${c === category ? "active" : ""}" data-cat="${esc(c)}">${esc(c)}</button>`
+      ).join("");
+    }
+
+    function render() {
+      const q = query.trim().toLowerCase();
+      const list = products.filter((p) =>
+        (category === "Все" || p.category === category) &&
+        (!q || p.name.toLowerCase().includes(q))
+      );
+      $("grid").innerHTML = list.map((p) => `
+        <div class="card" data-id="${p.id}">
+          ${imgHtml(p)}
+          <div class="info">
+            <div class="price">${fmt(p.price)}</div>
+            <div class="name">${esc(p.name)}</div>
+          </div>
+        </div>`).join("");
+      $("state").textContent = list.length ? "" : "Ничего не найдено";
+      $("state").style.display = list.length ? "none" : "block";
+    }
+
+    function openProduct(id) {
+      const p = products.find((x) => x.id == id);
+      if (!p) return;
+      $("sheetImg").innerHTML = imgHtml(p);
+      $("sheetPrice").textContent = fmt(p.price);
+      $("sheetName").textContent = p.name;
+      $("sheetCat").textContent = p.category || "";
+      $("sheetDesc").textContent = p.description || "";
+      $("sheet").scrollTop = 0;
+      $("sheet").classList.add("open");
+      tg?.BackButton.show();
+    }
+
+    function closeProduct() {
+      $("sheet").classList.remove("open");
+      tg?.BackButton.hide();
+    }
+
+    $("chips").addEventListener("click", (e) => {
+      const b = e.target.closest(".chip");
+      if (!b) return;
+      category = b.dataset.cat;
+      renderChips();
+      render();
+    });
+    $("grid").addEventListener("click", (e) => {
+      const c = e.target.closest(".card");
+      if (c) openProduct(c.dataset.id);
+    });
+    $("search").addEventListener("input", (e) => { query = e.target.value; render(); });
+    tg?.BackButton.onClick(closeProduct);
+
+    load();
   </script>
 </body>
 </html>
