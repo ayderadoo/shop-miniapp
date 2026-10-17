@@ -4,29 +4,74 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <title>Магазин</title>
+  <title>RAMP</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
+    /* RAMP: лазурит Самарканда + бирюза изразцов, диагональ «трамплина» */
     :root {
-      --bg: var(--tg-theme-bg-color, #ffffff);
-      --bg2: var(--tg-theme-secondary-bg-color, #f2f2f7);
-      --text: var(--tg-theme-text-color, #111111);
-      --hint: var(--tg-theme-hint-color, #8e8e93);
-      --link: var(--tg-theme-link-color, #ff5a1f);
-      --accent: var(--tg-theme-button-color, #ff5a1f);
-      --accent-text: var(--tg-theme-button-text-color, #ffffff);
-      --danger: var(--tg-theme-destructive-text-color, #e5484d);
-      --sep: color-mix(in srgb, var(--hint) 22%, transparent);
-      --radius: 14px;
-      --tabbar: 62px;
+      --lapis: #2B3FD6;
+      --lapis-deep: #1E2DA3;
+      --tile: #19C3C9;
+      --ink: #14183A;
+      --sun: #FFC93C;
+
+      --bg: #FFFFFF;            /* карточки, панели */
+      --bg2: #F3F5FB;           /* фон страницы, поля ввода */
+      --text: var(--ink);
+      --hint: #6B7194;
+      --link: var(--lapis);
+      --accent: var(--lapis);
+      --accent-text: #FFFFFF;
+      --danger: #E5484D;
+      --sep: #E2E5F0;
+      --radius: 16px;
+      --tabbar: 64px;
       --safe-b: env(safe-area-inset-bottom, 0px);
+      --display: "Dela Gothic One", "Manrope", sans-serif;
+      color-scheme: light;
+    }
+    :root[data-theme="dark"] {
+      --bg: #1A1E45;
+      --bg2: #10132F;
+      --text: #EEF0FF;
+      --hint: #9097C4;
+      --link: #8C9BFF;
+      --accent: #4A5CF0;
+      --sep: #2A2F63;
+      color-scheme: dark;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     html, body { background: var(--bg2); }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      color: var(--text); font-size: 15px;
+      font-family: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--text); font-size: 15px; font-weight: 500;
+      font-variant-numeric: tabular-nums;
       padding-bottom: calc(var(--tabbar) + var(--safe-b) + 16px);
     }
+    :focus-visible { outline: 2px solid var(--tile); outline-offset: 2px; }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+    /* Шапка каталога: плашка-трамплин */
+    /* Бирюзовая кромка вдоль диагонали: обёртка чуть больше самой плашки */
+    .hero-edge { background: var(--tile); clip-path: polygon(0 0, 100% 0, 100% 74%, 0 100%); }
+    .hero {
+      background: var(--lapis); color: #fff;
+      padding: 18px 16px 50px;
+      clip-path: polygon(0 0, 100% 0, 100% 70%, 0 96%);
+    }
+    .wordmark {
+      font-family: var(--display); font-size: 44px; line-height: 1; letter-spacing: 1px;
+      display: inline-block; transform: skewX(-10deg); transform-origin: left bottom;
+    }
+    .tagline { margin-top: 8px; font-size: 14px; font-weight: 600; color: rgba(255,255,255,.82); }
+    .hero .search {
+      margin-top: 14px; background: rgba(255,255,255,.14); color: #fff;
+      border: 1.5px solid rgba(255,255,255,.22);
+    }
+    .hero .search::placeholder { color: rgba(255,255,255,.7); }
+    .catalog-bar { position: sticky; top: 0; z-index: 5; background: var(--bg2); padding: 0 16px; margin-top: -10px; }
     button { font: inherit; color: inherit; border: none; background: none; cursor: pointer; }
     input, textarea {
       font: inherit; color: var(--text); width: 100%; border: none; outline: none;
@@ -37,35 +82,45 @@
 
     .view { display: none; }
     .view.active { display: block; }
-    .top { background: var(--bg); padding: 14px 16px 12px; position: sticky; top: 0; z-index: 5; }
-    .top h1 { font-size: 22px; font-weight: 700; }
-    .top .sub { color: var(--hint); font-size: 13px; margin-top: 2px; }
-    .section { background: var(--bg); border-radius: var(--radius); margin: 12px 16px; padding: 14px; }
-    .section h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+    .top { background: var(--bg2); padding: 18px 16px 6px; position: sticky; top: 0; z-index: 5; }
+    .top h1 { font-size: 26px; font-weight: 800; letter-spacing: -.3px; }
+    .top .sub { color: var(--hint); font-size: 14px; margin-top: 4px; line-height: 1.4; max-width: 36ch; }
+    .section { background: var(--bg); border-radius: var(--radius); margin: 12px 16px; padding: 16px; }
+    .section h3 { font-size: 16px; font-weight: 800; margin-bottom: 8px; }
     .muted { color: var(--hint); font-size: 13px; }
     .empty { text-align: center; color: var(--hint); padding: 48px 24px; }
     .empty .big { font-size: 44px; margin-bottom: 10px; }
 
     .btn {
       display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%;
-      background: var(--accent); color: var(--accent-text); border-radius: 12px;
-      padding: 13px 16px; font-weight: 600; font-size: 16px;
+      background: var(--accent); color: var(--accent-text); border-radius: 14px;
+      padding: 14px 16px; font-weight: 800; font-size: 16px;
+      transition: transform .12s ease;
     }
+    .btn:active { transform: scale(.98); }
     .btn.secondary { background: var(--bg2); color: var(--text); }
     .btn:disabled { opacity: .5; }
 
     /* Каталог */
-    .search { margin-top: 10px; }
-    .chips { display: flex; gap: 8px; overflow-x: auto; padding-top: 10px; scrollbar-width: none; }
+    .chips { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 8px; scrollbar-width: none; }
     .chips::-webkit-scrollbar { display: none; }
-    .chip { flex: none; border-radius: 999px; padding: 7px 14px; font-size: 14px; background: var(--bg2); }
-    .chip.active { background: var(--accent); color: var(--accent-text); }
-    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 12px 16px; }
+    .chip {
+      flex: none; border-radius: 999px; padding: 8px 15px; font-size: 14px; font-weight: 700;
+      background: var(--bg); color: var(--text); border: 1.5px solid var(--sep);
+    }
+    .chip.active { background: var(--ink); border-color: var(--ink); color: #fff; }
+    :root[data-theme="dark"] .chip.active { background: var(--tile); border-color: var(--tile); color: var(--ink); }
+    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 8px 16px 12px; }
     .card { background: var(--bg); border-radius: var(--radius); overflow: hidden; position: relative; }
     .img { width: 100%; aspect-ratio: 1; object-fit: cover; background: var(--bg2); display: block; }
-    .noimg { display: flex; align-items: center; justify-content: center; font-size: 34px; }
-    .info { padding: 8px 10px 10px; }
-    .price { font-weight: 700; font-size: 16px; }
+    .noimg {
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--display); font-size: 18px; letter-spacing: 1px; color: var(--sep);
+      background: linear-gradient(165deg, var(--bg2) 72%, color-mix(in srgb, var(--tile) 12%, var(--bg2)) 72%);
+    }
+    .noimg.thumb { font-size: 16px; }
+    .info { padding: 10px 12px 12px; }
+    .price { font-weight: 800; font-size: 17px; letter-spacing: -.2px; }
     .name { font-size: 13px; margin-top: 3px; line-height: 1.3;
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .heart {
@@ -74,9 +129,10 @@
       display: flex; align-items: center; justify-content: center;
     }
     .badge-out {
-      position: absolute; left: 8px; top: 8px; background: rgba(0,0,0,.6); color: #fff;
-      font-size: 11px; border-radius: 6px; padding: 3px 7px;
+      position: absolute; left: 8px; top: 8px; background: var(--ink); color: #fff;
+      font-size: 11px; font-weight: 700; border-radius: 8px; padding: 4px 8px;
     }
+    :root[data-theme="dark"] .badge-out { background: #EEF0FF; color: var(--ink); }
     .card.out .img { opacity: .55; }
 
     /* Нижние вкладки */
@@ -87,10 +143,15 @@
       display: grid; grid-template-columns: repeat(6, 1fr);
     }
     .tab { display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 3px; color: var(--hint); font-size: 10.5px; position: relative; }
+      gap: 3px; color: var(--hint); font-size: 10.5px; font-weight: 700; position: relative; }
     .tab svg { width: 24px; height: 24px; stroke: currentColor; fill: none; stroke-width: 1.8;
       stroke-linecap: round; stroke-linejoin: round; }
     .tab.active { color: var(--accent); }
+    /* Активная вкладка: короткая наклонная полоска сверху — та же диагональ, что в шапке */
+    .tab.active::before {
+      content: ""; position: absolute; top: 0; left: 50%; width: 26px; height: 4px;
+      background: var(--tile); transform: translateX(-50%) skewX(-30deg); border-radius: 0 0 2px 2px;
+    }
     .count {
       position: absolute; top: 6px; left: calc(50% + 6px); min-width: 17px; height: 17px;
       border-radius: 9px; background: var(--danger); color: #fff; font-size: 10.5px;
@@ -169,9 +230,14 @@
 
   <!-- КАТАЛОГ -->
   <section class="view active" id="v-catalog">
-    <div class="top">
-      <h1>Магазин</h1>
-      <input class="search" id="search" type="search" placeholder="Поиск товаров">
+    <div class="hero-edge">
+      <div class="hero">
+        <div class="wordmark">RAMP</div>
+        <div class="tagline">Товары с Пиндодо с доставкой по Узбекистану. Цены в сумах</div>
+        <input class="search" id="search" type="search" placeholder="Найти товар">
+      </div>
+    </div>
+    <div class="catalog-bar">
       <div class="chips" id="chips"></div>
     </div>
     <div class="grid" id="grid"></div>
@@ -340,6 +406,21 @@
     const tg = window.Telegram?.WebApp;
     tg?.ready();
     tg?.expand();
+
+    // Тема RAMP: светлая или тёмная по настройке Telegram, шапка Telegram в цвет плашки
+    function applyTheme() {
+      const dark = tg?.colorScheme === "dark" ||
+        (!tg?.initData && window.matchMedia?.("(prefers-color-scheme: dark)").matches);
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+      try {
+        const tab = document.querySelector(".tab.active")?.dataset.tab || "catalog";
+        tg?.setHeaderColor?.(tab === "catalog" ? "#2B3FD6" : (dark ? "#10132F" : "#F3F5FB"));
+        tg?.setBackgroundColor?.(dark ? "#10132F" : "#F3F5FB");
+        tg?.setBottomBarColor?.(dark ? "#1A1E45" : "#FFFFFF");
+      } catch {}
+    }
+    applyTheme();
+    tg?.onEvent?.("themeChanged", applyTheme);
     const inTelegram = !!tg?.initData;
 
     const state = {
@@ -361,7 +442,7 @@
     const date = (d) => new Date(d).toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
     const imgTag = (src, cls = "img") => src
       ? `<img class="${cls}" src="${esc(src)}" alt="" loading="lazy">`
-      : `<div class="${cls} noimg">📦</div>`;
+      : `<div class="${cls} noimg">RAMP</div>`;
     const haptic = (t = "light") => tg?.HapticFeedback?.impactOccurred(t);
 
     let toastTimer;
@@ -755,6 +836,7 @@
       document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "v-" + tab));
       document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
       window.scrollTo(0, 0);
+      applyTheme();
       if (tab === "orders") { if (state.orders) renderOrders(); loadOrders(); }
       if (tab === "photo") loadRequests();
       if (tab === "cart") renderCart();
