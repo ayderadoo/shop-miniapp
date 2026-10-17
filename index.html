@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <title>Магазин</title>
+</head>
+<body>
+  <h1>Магазин работает ✅</h1>
+  <p id="hello"></p>
+  <script>
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    tg.expand();
+    const user = tg.initDataUnsafe.user;
+    document.getElementById("hello").textContent =
+      user ? "Привет, " + user.first_name + "!" : "Открыто не из Telegram";
+  </script>
+</body>
+</html>
