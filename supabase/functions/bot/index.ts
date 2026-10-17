@@ -20,8 +20,7 @@ async function onMessage(msg: any) {
   if (text.startsWith("/start")) {
     return tg("sendMessage", {
       chat_id: chatId,
-      text: "Привет! 👋\nТовары с Пиндодо с доставкой по Узбекистану, цены в сумах.\n\n" +
-        "Каталог, поиск по фото, корзина и ваши заказы — в магазине:",
+      text: "Привет! 👋 Это RAMP.\n\nКаталог, поиск по фото, корзина и ваши заказы — в магазине:",
       reply_markup: shopButton(),
     });
   }
