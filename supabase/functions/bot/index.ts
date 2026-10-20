@@ -1,13 +1,16 @@
 // Вебхук Telegram-бота: /start (номер телефона, приглашения), ответы админа, статусы заказов.
 // Первый запуск: открыть в браузере .../functions/v1/bot?setup=1
 import {
-  ADMIN_ID, applyReferral, BOT_TOKEN, esc, fmt, MINIAPP_URL, normPhone, PROMO, safeEqual, sb,
-  STATUS, tg, webhookSecret,
+  ADMIN_URL, answerPhotoRequest, applyReferral, cfg, fmt, isAdmin, MINIAPP_URL, normPhone, safeEqual, sb,
+  setOrderStatus, shopButton, STATUS, tg, webhookSecret,
 } from "../_shared/common.ts";
 
-const shopButton = (text = "🛍 Открыть RAMP") => ({
-  inline_keyboard: [[{ text, web_app: { url: MINIAPP_URL } }]],
-});
+const adminButtons = {
+  inline_keyboard: [
+    [{ text: "⚙️ Админ-панель", web_app: { url: ADMIN_URL } }],
+    [{ text: "🛍 Магазин", web_app: { url: MINIAPP_URL } }],
+  ],
+};
 
 const phoneKeyboard = {
   keyboard: [[{ text: "📱 Поделиться номером", request_contact: true }]],
@@ -32,6 +35,8 @@ async function onStart(msg: any) {
   const chatId = msg.chat.id;
   const profile = await ensureProfile(msg.from);
 
+  const { promo } = await cfg();
+
   // /start ref_RAMP-123456 — пришёл по приглашению
   const payload = (msg.text ?? "").split(" ")[1] ?? "";
   if (payload.startsWith("ref_")) {
@@ -39,8 +44,8 @@ async function onStart(msg: any) {
     if (res.ok) {
       await tg("sendMessage", {
         chat_id: chatId,
-        text: `🎁 Вы пришли по приглашению друга. Оформите заказ от ${fmt(PROMO.minQualifyingOrder)} — ` +
-          `после оплаты получите купон −${PROMO.inviteeNextPct}% на следующий заказ.`,
+        text: `🎁 Вы пришли по приглашению друга. Оформите заказ от ${fmt(promo.minQualifyingOrder)} — ` +
+          `после оплаты получите купон −${promo.inviteeNextPct}% на следующий заказ.`,
       });
     }
   }
@@ -52,6 +57,10 @@ async function onStart(msg: any) {
         "Чтобы оформлять заказы и получать уведомления о доставке, поделитесь номером телефона — кнопка внизу 👇",
       reply_markup: phoneKeyboard,
     });
+  }
+
+  if (await isAdmin(msg.from.id)) {
+    await tg("sendMessage", { chat_id: chatId, text: "Вы администратор RAMP. Панель управления 👇", reply_markup: adminButtons });
   }
 
   return tg("sendMessage", {
@@ -99,38 +108,31 @@ async function onMessage(msg: any) {
     return tg("sendMessage", { chat_id: chatId, text: `Ваш ID в RAMP: ${p.public_id}\nTelegram ID: ${fromId}` });
   }
 
-  // Ответ админа на заявку или заказ -> клиенту
-  if (ADMIN_ID && fromId === ADMIN_ID && msg.reply_to_message) {
-    const replyTo = msg.reply_to_message.message_id;
-    const answerText = msg.text ?? msg.caption ?? "";
+  const admin = fromId ? await isAdmin(fromId) : false;
 
-    const { data: pr } = await sb.from("photo_requests")
-      .select("id,telegram_id").eq("admin_message_id", replyTo).maybeSingle();
-    if (pr) {
-      await sb.from("photo_requests").update({
-        status: "answered",
-        answer: answerText || "Ответ отправлен в чат с ботом",
-        answered_at: new Date().toISOString(),
-      }).eq("id", pr.id);
-      await tg("sendMessage", { chat_id: pr.telegram_id, text: `📷 Ответ по вашей заявке №${pr.id}:` });
-      await tg("copyMessage", { chat_id: pr.telegram_id, from_chat_id: chatId, message_id: msg.message_id });
-      await tg("sendMessage", {
-        chat_id: pr.telegram_id,
-        text: "Ответ также сохранён в разделе «Фото» в магазине.",
-        reply_markup: shopButton(),
-      });
+  if (admin && text.startsWith("/admin")) {
+    return tg("sendMessage", { chat_id: chatId, text: "Панель управления RAMP 👇", reply_markup: adminButtons });
+  }
+
+  // Ответ админа свайпом на заказ или заявку -> клиенту
+  if (admin && msg.reply_to_message) {
+    const { data: link } = await sb.from("admin_messages").select("kind,ref_id")
+      .eq("chat_id", chatId).eq("message_id", msg.reply_to_message.message_id).maybeSingle();
+    if (!link) return tg("sendMessage", { chat_id: chatId, text: "Не нашёл заказ или заявку для этого сообщения." });
+
+    const answerText = msg.text ?? msg.caption ?? "";
+    if (link.kind === "photo") {
+      const pr = await answerPhotoRequest(link.ref_id, answerText || "Ответ отправлен в чат с ботом");
+      if (!pr) return tg("sendMessage", { chat_id: chatId, text: "Заявка не найдена." });
+      if (!msg.text) await tg("copyMessage", { chat_id: pr.telegram_id, from_chat_id: chatId, message_id: msg.message_id });
       return tg("sendMessage", { chat_id: chatId, text: `✅ Ответ по заявке №${pr.id} отправлен клиенту` });
     }
 
-    const { data: order } = await sb.from("orders")
-      .select("id,telegram_id").eq("admin_message_id", replyTo).maybeSingle();
-    if (order) {
-      await tg("sendMessage", { chat_id: order.telegram_id, text: `💬 Сообщение по заказу №${order.id}:` });
-      await tg("copyMessage", { chat_id: order.telegram_id, from_chat_id: chatId, message_id: msg.message_id });
-      return tg("sendMessage", { chat_id: chatId, text: `✅ Отправлено клиенту по заказу №${order.id}` });
-    }
-
-    return tg("sendMessage", { chat_id: chatId, text: "Не нашёл заявку или заказ для этого сообщения." });
+    const { data: order } = await sb.from("orders").select("id,telegram_id").eq("id", link.ref_id).maybeSingle();
+    if (!order) return tg("sendMessage", { chat_id: chatId, text: "Заказ не найден." });
+    await tg("sendMessage", { chat_id: order.telegram_id, text: `💬 Сообщение по заказу №${order.id}:` });
+    await tg("copyMessage", { chat_id: order.telegram_id, from_chat_id: chatId, message_id: msg.message_id });
+    return tg("sendMessage", { chat_id: chatId, text: `✅ Отправлено клиенту по заказу №${order.id}` });
   }
 
   return tg("sendMessage", {
@@ -140,71 +142,22 @@ async function onMessage(msg: any) {
   });
 }
 
-const PAID_OR_LATER = ["paid", "bought", "shipping", "arrived", "delivered"];
-
-// Купоны при смене статуса. Флаг ref_rewarded у приглашённого защищает от повторной выдачи.
-async function settleOrder(orderId: number, status: string) {
-  if (PAID_OR_LATER.includes(status)) {
-    const { data: o } = await sb.from("orders").select("id,telegram_id,subtotal").eq("id", orderId).single();
-    if (!o || (o.subtotal ?? 0) < PROMO.minQualifyingOrder) return;
-
-    // Первый оплаченный заказ приглашённого от минимальной суммы
-    const { data: buyer } = await sb.from("profiles").update({ ref_rewarded: true })
-      .eq("telegram_id", o.telegram_id).eq("ref_rewarded", false).not("referred_by", "is", null)
-      .select("telegram_id,referred_by").maybeSingle();
-    if (!buyer) return;
-
-    await sb.from("coupons").insert([
-      { telegram_id: buyer.referred_by, pct: PROMO.inviterPct, reason: "ref_inviter", source_order_id: o.id },
-      { telegram_id: buyer.telegram_id, pct: PROMO.inviteeNextPct, reason: "ref_invitee", source_order_id: o.id },
-    ]);
-    await tg("sendMessage", {
-      chat_id: buyer.referred_by,
-      text: `🎁 Ваш друг оплатил заказ — вам купон −${PROMO.inviterPct}% на следующий заказ. ` +
-        "Скидка применится автоматически при оформлении.",
-      reply_markup: shopButton(),
-    });
-    await tg("sendMessage", {
-      chat_id: buyer.telegram_id,
-      text: `🎁 Спасибо за заказ! Ваш купон −${PROMO.inviteeNextPct}% на следующий заказ уже в профиле.`,
-    });
-  }
-
-  // Отмена заказа возвращает использованный купон
-  if (status === "cancelled") {
-    await sb.from("coupons").update({ used_order_id: null, used_at: null }).eq("used_order_id", orderId);
-  }
-}
-
 async function onCallback(cb: any) {
   const answer = (text: string) => tg("answerCallbackQuery", { callback_query_id: cb.id, text });
-  if (!ADMIN_ID || cb.from?.id !== ADMIN_ID) return answer("Нет доступа");
+  if (!cb.from?.id || !(await isAdmin(cb.from.id))) return answer("Нет доступа");
 
   const m = /^st:(\d+):(\w+)$/.exec(cb.data ?? "");
   if (!m || !STATUS[m[2]]) return answer("Неизвестная команда");
-  const [, id, status] = m;
-
-  const { data: order, error } = await sb.from("orders")
-    .update({ status, updated_at: new Date().toISOString() })
-    .eq("id", Number(id)).select("id,telegram_id").maybeSingle();
-  if (error || !order) return answer("Заказ не найден");
-
-  await settleOrder(order.id, status);
-
-  await tg("sendMessage", {
-    chat_id: order.telegram_id,
-    parse_mode: "HTML",
-    text: `📦 Заказ №${order.id}: <b>${esc(STATUS[status])}</b>`,
-    reply_markup: shopButton("Мои заказы"),
-  });
-  return answer(`Заказ №${order.id}: ${STATUS[status]}`);
+  const order = await setOrderStatus(Number(m[1]), m[2]);
+  if (!order) return answer("Заказ не найден");
+  return answer(`Заказ №${order.id}: ${STATUS[m[2]]}`);
 }
 
 Deno.serve(async (req) => {
   const url = new URL(req.url);
 
   if (req.method === "GET" && url.searchParams.get("setup") === "1") {
-    if (!BOT_TOKEN) return new Response("BOT_TOKEN не задан в секретах Supabase", { status: 500 });
+    if (!(await cfg()).botToken) return new Response("Токен бота не задан", { status: 500 });
     const hookUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/bot`;
     const res = await tg("setWebhook", {
       url: hookUrl,
@@ -218,6 +171,17 @@ Deno.serve(async (req) => {
         { command: "myid", description: "Мой ID в RAMP" },
       ],
     });
+    // Админам — дополнительная команда /admin
+    for (const id of (await cfg()).admins) {
+      await tg("setMyCommands", {
+        scope: { type: "chat", chat_id: id },
+        commands: [
+          { command: "start", description: "Открыть магазин" },
+          { command: "admin", description: "Админ-панель" },
+          { command: "myid", description: "Мой ID в RAMP" },
+        ],
+      });
+    }
     const ok = res.ok
       ? "✅ Бот подключён. Можно закрыть страницу."
       : `❌ Ошибка: ${res.description}`;

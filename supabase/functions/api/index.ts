@@ -1,7 +1,7 @@
 // API мини-эппа: каждый запрос подписан Telegram (initData), иначе отказ.
 import {
-  ADMIN_ID, applyReferral, BOT_TOKEN, esc, fmt, getBotUsername, hex, hmac,
-  PAYMENTS, PROMO, safeEqual, sb, STATUS, tg,
+  applyReferral, cfg, esc, fmt, getBotUsername, isAdmin, notifyAdmins, sb, statusKeyboard, tg,
+  type TgUser, verifyInitData,
 } from "../_shared/common.ts";
 
 const cors = {
@@ -18,30 +18,6 @@ const json = (data: unknown, status = 200) =>
 
 class HttpError extends Error {
   constructor(public status: number, message: string, public code?: string) { super(message); }
-}
-
-type TgUser = { id: number; first_name?: string; last_name?: string; username?: string };
-
-async function verifyInitData(initData: string): Promise<TgUser | null> {
-  if (!initData || !BOT_TOKEN) return null;
-  const params = new URLSearchParams(initData);
-  const hash = params.get("hash");
-  if (!hash) return null;
-  params.delete("hash");
-  const dataCheck = [...params.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([k, v]) => `${k}=${v}`)
-    .join("\n");
-  const secret = await hmac(new TextEncoder().encode("WebAppData"), BOT_TOKEN);
-  if (!safeEqual(hex(await hmac(secret, dataCheck)), hash)) return null;
-  const authDate = Number(params.get("auth_date") ?? 0);
-  if (Date.now() / 1000 - authDate > 7 * 86400) return null;
-  try {
-    const user = JSON.parse(params.get("user") ?? "null");
-    return user?.id ? user : null;
-  } catch {
-    return null;
-  }
 }
 
 const str = (v: unknown, max: number) => String(v ?? "").trim().slice(0, max);
@@ -114,6 +90,7 @@ const COUPON_LABEL: Record<string, string> = {
 
 // Скидки пользователя: приветственная, купоны, приглашения — всё для профиля
 async function promo(uid: number, profile: any) {
+  const PROMO = (await cfg()).promo;
   const [coupons, liveOrders, invited] = await Promise.all([
     sb.from("coupons").select("id,pct,reason,created_at").eq("telegram_id", uid)
       .is("used_order_id", null).order("pct", { ascending: false }),
@@ -162,19 +139,9 @@ async function quote(uid: number) {
   };
 }
 
-function statusKeyboard(orderId: number) {
-  const b = (s: string) => ({ text: STATUS[s], callback_data: `st:${orderId}:${s}` });
-  return {
-    inline_keyboard: [
-      [b("paid"), b("bought")],
-      [b("shipping"), b("arrived")],
-      [b("delivered"), b("cancelled")],
-    ],
-  };
-}
-
 async function handle(action: string, body: any, user: TgUser) {
   const uid = user.id;
+  const PAYMENTS = (await cfg()).payments;
 
   switch (action) {
     case "me": {
@@ -187,7 +154,7 @@ async function handle(action: string, body: any, user: TgUser) {
       }, { onConflict: "telegram_id" }));
       const profile = await getProfile(uid);
       const [cart, wish, pr] = await Promise.all([listCart(uid), listWish(uid), promo(uid, profile)]);
-      return { profile, cart, wish, promo: pr, payments: PAYMENTS };
+      return { profile, cart, wish, promo: pr, payments: PAYMENTS, is_admin: await isAdmin(uid) };
     }
 
     case "saveProfile": {
@@ -306,29 +273,23 @@ async function handle(action: string, body: any, user: TgUser) {
       check(await sb.from("cart_items").delete().eq("telegram_id", uid));
       check(await sb.from("profiles").update({ full_name, phone, address }).eq("telegram_id", uid));
 
-      if (ADMIN_ID) {
-        const lines = items.map((i) => `• ${esc(i.name)} × ${i.qty} — ${fmt(i.price * i.qty)}`).join("\n");
-        const who = user.username ? `@${esc(user.username)}` : `id ${uid}`;
-        const money = [
-          `Товары: ${fmt(q.subtotal)}`,
-          q.discount_amount ? `${esc(q.discount_reason)} (${q.discount_pct}%): −${fmt(q.discount_amount)}` : "",
-        ].filter(Boolean).join("\n");
-        const sent = await tg("sendMessage", {
-          chat_id: ADMIN_ID,
-          parse_mode: "HTML",
-          text: `🛒 <b>Новый заказ №${order.id}</b>\n\n${lines}\n\n${money}\n<b>К оплате: ${fmt(q.total)}</b>\n` +
-            `💳 ${esc(PAYMENTS[payment_method])}\n\n` +
-            `👤 ${esc(full_name)} (${who}, ${esc(profile.public_id)})\n📞 ${esc(phone)}` +
-            (profile.tg_phone && profile.tg_phone !== phone ? ` · Telegram: ${esc(profile.tg_phone)}` : "") +
-            `\n📍 ${esc(address)}` +
-            (comment ? `\n💬 ${esc(comment)}` : "") +
-            `\n\nКнопки ниже меняют статус. Ответ на это сообщение уйдёт клиенту.`,
-          reply_markup: statusKeyboard(order.id),
-        });
-        if (sent.ok) {
-          await sb.from("orders").update({ admin_message_id: sent.result.message_id }).eq("id", order.id);
-        }
-      }
+      const lines = items.map((i) => `• ${esc(i.name)} × ${i.qty} — ${fmt(i.price * i.qty)}`).join("\n");
+      const who = user.username ? `@${esc(user.username)}` : `id ${uid}`;
+      const money = [
+        `Товары: ${fmt(q.subtotal)}`,
+        q.discount_amount ? `${esc(q.discount_reason)} (${q.discount_pct}%): −${fmt(q.discount_amount)}` : "",
+      ].filter(Boolean).join("\n");
+      await notifyAdmins("order", order.id, "sendMessage", {
+        parse_mode: "HTML",
+        text: `🛒 <b>Новый заказ №${order.id}</b>\n\n${lines}\n\n${money}\n<b>К оплате: ${fmt(q.total)}</b>\n` +
+          `💳 ${esc(PAYMENTS[payment_method])}\n\n` +
+          `👤 ${esc(full_name)} (${who}, ${esc(profile.public_id)})\n📞 ${esc(phone)}` +
+          (profile.tg_phone && profile.tg_phone !== phone ? ` · Telegram: ${esc(profile.tg_phone)}` : "") +
+          `\n📍 ${esc(address)}` +
+          (comment ? `\n💬 ${esc(comment)}` : "") +
+          `\n\nКнопки ниже меняют статус. Ответ на это сообщение уйдёт клиенту.`,
+        reply_markup: statusKeyboard(order.id),
+      });
       const fresh = await getProfile(uid);
       return { order, orders: await listOrders(uid), profile: fresh, promo: await promo(uid, fresh) };
     }
@@ -358,21 +319,15 @@ async function handle(action: string, body: any, user: TgUser) {
         telegram_id: uid, photo_path: path, comment: comment || null,
       }).select().single()) as any;
 
-      if (ADMIN_ID) {
-        const { data: signed } = await sb.storage.from("requests").createSignedUrl(path, 3600);
-        const who = user.username ? `@${esc(user.username)}` : esc(user.first_name ?? `id ${uid}`);
-        const sent = await tg("sendPhoto", {
-          chat_id: ADMIN_ID,
-          photo: signed?.signedUrl,
-          parse_mode: "HTML",
-          caption: `📷 <b>Заявка по фото №${req.id}</b> от ${who}` +
-            (comment ? `\n💬 ${esc(comment)}` : "") +
-            `\n\n↩️ Ответьте на это сообщение — ответ уйдёт клиенту.`,
-        });
-        if (sent.ok) {
-          await sb.from("photo_requests").update({ admin_message_id: sent.result.message_id }).eq("id", req.id);
-        }
-      }
+      const { data: signed } = await sb.storage.from("requests").createSignedUrl(path, 86400);
+      const who = user.username ? `@${esc(user.username)}` : esc(user.first_name ?? `id ${uid}`);
+      await notifyAdmins("photo", req.id, "sendPhoto", {
+        photo: signed?.signedUrl,
+        parse_mode: "HTML",
+        caption: `📷 <b>Заявка по фото №${req.id}</b> от ${who}` +
+          (comment ? `\n💬 ${esc(comment)}` : "") +
+          `\n\n↩️ Ответьте на это сообщение — ответ уйдёт клиенту.`,
+      });
       return { requests: await listPhotoRequests(uid) };
     }
 
@@ -390,6 +345,9 @@ Deno.serve(async (req) => {
 
   const user = await verifyInitData(req.headers.get("x-init-data") ?? "");
   if (!user) return json({ error: "Откройте магазин через Telegram" }, 401);
+
+  const { data: p } = await sb.from("profiles").select("blocked").eq("telegram_id", user.id).maybeSingle();
+  if (p?.blocked) return json({ error: "Доступ к магазину ограничен. Напишите в поддержку." }, 403);
 
   try {
     const body = await req.json().catch(() => ({}));
