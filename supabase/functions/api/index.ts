@@ -1,7 +1,7 @@
 // API мини-эппа: каждый запрос подписан Telegram (initData), иначе отказ.
 import {
-  applyReferral, cfg, esc, fmt, getBotUsername, isAdmin, notifyAdmins, sb, statusKeyboard, tg,
-  type TgUser, verifyInitData,
+  applyReferral, cfg, esc, fmt, getBotUsername, isAdmin, notifyAdmins, receiptKeyboard, sb, statusKeyboard,
+  shopButton, SUPPORT_USERNAME, tg, type TgUser, verifyInitData,
 } from "../_shared/common.ts";
 
 const cors = {
@@ -38,7 +38,7 @@ function check<T>(res: { data: T; error: unknown }): T {
 const PRODUCT_COLS = "id,name,category,price,photo,description,active,in_stock";
 const PROFILE_COLS =
   "telegram_id,public_id,first_name,last_name,username,full_name,phone,tg_phone,city,address," +
-  "referred_by,ref_rewarded,catalog_view,created_at";
+  "referred_by,ref_rewarded,catalog_view,user_no,created_at";
 
 async function getProfile(uid: number) {
   return check(await sb.from("profiles").select(PROFILE_COLS).eq("telegram_id", uid).single()) as any;
@@ -64,7 +64,7 @@ async function listWish(uid: number) {
 async function listOrders(uid: number) {
   return check(await sb.from("orders")
     .select("id,items,subtotal,discount_pct,discount_amount,discount_reason,total,status,payment_method," +
-      "full_name,phone,address,comment,created_at")
+      "full_name,phone,address,comment,pay_card,receipt_at,reject_reason,created_at")
     .eq("telegram_id", uid)
     .order("created_at", { ascending: false })
     .limit(50));
@@ -154,7 +154,9 @@ async function handle(action: string, body: any, user: TgUser) {
       }, { onConflict: "telegram_id" }));
       const profile = await getProfile(uid);
       const [cart, wish, pr] = await Promise.all([listCart(uid), listWish(uid), promo(uid, profile)]);
-      return { profile, cart, wish, promo: pr, payments: PAYMENTS, is_admin: await isAdmin(uid) };
+      return {
+        profile, cart, wish, promo: pr, payments: PAYMENTS, is_admin: await isAdmin(uid), support: SUPPORT_USERNAME,
+      };
     }
 
     case "saveProfile": {
@@ -225,12 +227,18 @@ async function handle(action: string, body: any, user: TgUser) {
     }
 
     case "checkout": {
-      const full_name = str(body.full_name, 120);
+      // Данные получателя обязательны: на них оформляется посылка
+      const full_name = str(body.full_name, 120).replace(/\s+/g, " ");
       const phone = str(body.phone, 30);
-      const address = str(body.address, 300);
+      const city = str(body.city, 60);
+      const street = str(body.address, 300);
       const comment = str(body.comment, 500);
       const payment_method = String(body.payment_method ?? "");
-      if (!full_name || !phone || !address) throw new HttpError(400, "Заполните имя, телефон и адрес");
+      if (full_name.split(" ").length < 2) throw new HttpError(400, "Укажите имя и фамилию получателя полностью");
+      if (phone.replace(/\D/g, "").length < 9) throw new HttpError(400, "Укажите телефон получателя");
+      if (!city) throw new HttpError(400, "Укажите город получателя");
+      if (street.length < 5) throw new HttpError(400, "Укажите адрес получателя: улица, дом, квартира");
+      const address = `${city}, ${street}`;
       if (!PAYMENTS[payment_method]) throw new HttpError(400, "Выберите способ оплаты");
 
       const { cart, profile, quote: q } = await quote(uid);
@@ -248,8 +256,11 @@ async function handle(action: string, body: any, user: TgUser) {
         photo: c.product.photo,
       }));
 
+      const cards = (await cfg()).cards;
+      const pay_card = cards[Math.floor(Math.random() * cards.length)];
+
       const ins = await sb.from("orders").insert({
-        telegram_id: uid, items, comment: comment || null, full_name, phone, address, payment_method,
+        telegram_id: uid, items, comment: comment || null, full_name, phone, address, payment_method, pay_card,
         subtotal: q.subtotal, discount_pct: q.discount_pct, discount_amount: q.discount_amount,
         discount_reason: q.discount_reason, coupon_id: q.coupon_id, total: q.total,
       }).select().single();
@@ -271,7 +282,7 @@ async function handle(action: string, body: any, user: TgUser) {
       }
 
       check(await sb.from("cart_items").delete().eq("telegram_id", uid));
-      check(await sb.from("profiles").update({ full_name, phone, address }).eq("telegram_id", uid));
+      check(await sb.from("profiles").update({ full_name, phone, city, address: street }).eq("telegram_id", uid));
 
       const lines = items.map((i) => `• ${esc(i.name)} × ${i.qty} — ${fmt(i.price * i.qty)}`).join("\n");
       const who = user.username ? `@${esc(user.username)}` : `id ${uid}`;
@@ -282,20 +293,64 @@ async function handle(action: string, body: any, user: TgUser) {
       await notifyAdmins("order", order.id, "sendMessage", {
         parse_mode: "HTML",
         text: `🛒 <b>Новый заказ №${order.id}</b>\n\n${lines}\n\n${money}\n<b>К оплате: ${fmt(q.total)}</b>\n` +
-          `💳 ${esc(PAYMENTS[payment_method])}\n\n` +
-          `👤 ${esc(full_name)} (${who}, ${esc(profile.public_id)})\n📞 ${esc(phone)}` +
+          `💳 ${esc(PAYMENTS[payment_method])} · карта клиенту: ${esc(pay_card)}\n` +
+          `Ждём чек об оплате от клиента.\n\n` +
+          `👤 Клиент №${profile.user_no} · ${esc(full_name)} (${who}, ${esc(profile.public_id)})\n📞 ${esc(phone)}` +
           (profile.tg_phone && profile.tg_phone !== phone ? ` · Telegram: ${esc(profile.tg_phone)}` : "") +
           `\n📍 ${esc(address)}` +
           (comment ? `\n💬 ${esc(comment)}` : "") +
           `\n\nКнопки ниже меняют статус. Ответ на это сообщение уйдёт клиенту.`,
         reply_markup: statusKeyboard(order.id),
       });
+      await tg("sendMessage", {
+        chat_id: uid,
+        parse_mode: "HTML",
+        text: `🛒 Заказ №${order.id} оформлен!\n\nК оплате: <b>${fmt(q.total)}</b>\n` +
+          `Переведите сумму на карту:\n<code>${esc(pay_card)}</code>\n\n` +
+          `После оплаты отправьте скриншот чека в магазине: «Заказы» → заказ №${order.id} → «Отправить чек». ` +
+          `Мы проверим оплату и подтвердим заказ.\n\nВопросы: @${SUPPORT_USERNAME}`,
+        reply_markup: shopButton("Отправить чек"),
+      });
+
       const fresh = await getProfile(uid);
       return { order, orders: await listOrders(uid), profile: fresh, promo: await promo(uid, fresh) };
     }
 
     case "orders":
       return { orders: await listOrders(uid) };
+
+    case "uploadReceipt": {
+      const orderId = int(body.order_id);
+      const { data: o } = await sb.from("orders").select("id,telegram_id,status,total,pay_card")
+        .eq("id", orderId).eq("telegram_id", uid).maybeSingle();
+      if (!o) throw new HttpError(404, "Заказ не найден");
+      if (!["new", "review"].includes(o.status)) throw new HttpError(409, "Этот заказ уже оплачен");
+      const m = /^data:image\/(jpeg|png|webp);base64,(.+)$/.exec(String(body.image ?? ""));
+      if (!m) throw new HttpError(400, "Нужен скриншот или фото чека");
+      const bytes = Uint8Array.from(atob(m[2]), (c) => c.charCodeAt(0));
+      if (bytes.length > 5 * 1024 * 1024) throw new HttpError(413, "Фото слишком большое");
+      const path = `receipts/${uid}/${orderId}-${crypto.randomUUID()}.${m[1] === "jpeg" ? "jpg" : m[1]}`;
+      const up = await sb.storage.from("requests").upload(path, bytes, { contentType: `image/${m[1]}` });
+      if (up.error) {
+        console.error(up.error);
+        throw new HttpError(500, "Не удалось загрузить чек");
+      }
+      check(await sb.from("orders").update({
+        status: "review", receipt_path: path, receipt_at: new Date().toISOString(), reject_reason: null,
+        updated_at: new Date().toISOString(),
+      }).eq("id", orderId));
+
+      const profile = await getProfile(uid);
+      const { data: signed } = await sb.storage.from("requests").createSignedUrl(path, 86400);
+      await notifyAdmins("receipt", orderId, "sendPhoto", {
+        photo: signed?.signedUrl,
+        parse_mode: "HTML",
+        caption: `🧾 <b>Чек по заказу №${orderId}</b>\nКлиент №${profile.user_no} · ${esc(profile.full_name || profile.first_name || "")}\n` +
+          `Сумма к оплате: <b>${fmt(o.total)}</b>\nКарта: ${esc(o.pay_card || "—")}\n\nПроверьте поступление и нажмите кнопку.`,
+        reply_markup: receiptKeyboard(orderId),
+      });
+      return { orders: await listOrders(uid) };
+    }
 
     case "photoRequest": {
       const m = /^data:image\/(jpeg|png|webp);base64,(.+)$/.exec(String(body.image ?? ""));
@@ -344,7 +399,7 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 
   const user = await verifyInitData(req.headers.get("x-init-data") ?? "");
-  if (!user) return json({ error: "Откройте магазин через Telegram" }, 401);
+  if (!user) return json({ error: "Не удалось подтвердить вход. Закройте магазин и откройте его кнопкой «Открыть RAMP» в боте." }, 401);
 
   const { data: p } = await sb.from("profiles").select("blocked").eq("telegram_id", user.id).maybeSingle();
   if (p?.blocked) return json({ error: "Доступ к магазину ограничен. Напишите в поддержку." }, 403);

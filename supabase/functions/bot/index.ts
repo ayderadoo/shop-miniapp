@@ -1,8 +1,8 @@
 // Вебхук Telegram-бота: /start (номер телефона, приглашения), ответы админа, статусы заказов.
 // Первый запуск: открыть в браузере .../functions/v1/bot?setup=1
 import {
-  ADMIN_URL, answerPhotoRequest, applyReferral, cfg, fmt, isAdmin, MINIAPP_URL, normPhone, safeEqual, sb,
-  setOrderStatus, shopButton, STATUS, tg, webhookSecret,
+  ADMIN_URL, answerPhotoRequest, applyReferral, cfg, esc, fmt, isAdmin, MINIAPP_URL, normPhone, reviewReceipt, safeEqual,
+  sb, setOrderStatus, shopButton, STATUS, SUPPORT_USERNAME, tg, webhookSecret,
 } from "../_shared/common.ts";
 
 const adminButtons = {
@@ -27,7 +27,7 @@ async function ensureProfile(from: any) {
     username: from.username ?? null,
     updated_at: new Date().toISOString(),
   }, { onConflict: "telegram_id" });
-  const { data } = await sb.from("profiles").select("public_id,tg_phone").eq("telegram_id", from.id).single();
+  const { data } = await sb.from("profiles").select("public_id,user_no,tg_phone").eq("telegram_id", from.id).single();
   return data!;
 }
 
@@ -50,11 +50,18 @@ async function onStart(msg: any) {
     }
   }
 
+  const name = msg.from.first_name ? `, ${esc(msg.from.first_name)}` : "";
+  const welcome = `👋 Добро пожаловать в RAMP${name}!\n\n` +
+    `Ваш номер клиента: <b>№${profile.user_no}</b>\nID для приглашения друзей: <code>${profile.public_id}</code>\n\n` +
+    `🎁 Новым покупателям — скидка ${promo.welcomePct}% на все заказы ${promo.welcomeDays} дней.\n` +
+    `📷 Не нашли товар в каталоге? Пришлите фото — найдём и посчитаем цену.\n` +
+    `💬 Поддержка: @${SUPPORT_USERNAME}`;
+
   if (!profile.tg_phone) {
     return tg("sendMessage", {
       chat_id: chatId,
-      text: `Привет! 👋 Это RAMP.\n\nВаш ID: ${profile.public_id}\n\n` +
-        "Чтобы оформлять заказы и получать уведомления о доставке, поделитесь номером телефона — кнопка внизу 👇",
+      parse_mode: "HTML",
+      text: welcome + "\n\n📱 Чтобы пользоваться магазином, подтвердите номер телефона — нажмите кнопку внизу.",
       reply_markup: phoneKeyboard,
     });
   }
@@ -63,12 +70,7 @@ async function onStart(msg: any) {
     await tg("sendMessage", { chat_id: chatId, text: "Вы администратор RAMP. Панель управления 👇", reply_markup: adminButtons });
   }
 
-  return tg("sendMessage", {
-    chat_id: chatId,
-    text: `Привет! 👋 Это RAMP.\nВаш ID: ${profile.public_id}\n\n` +
-      "Каталог, поиск по фото, корзина и ваши заказы — в магазине:",
-    reply_markup: shopButton(),
-  });
+  return tg("sendMessage", { chat_id: chatId, parse_mode: "HTML", text: welcome, reply_markup: shopButton() });
 }
 
 async function onContact(msg: any) {
@@ -92,7 +94,15 @@ async function onContact(msg: any) {
     text: `✅ Номер ${phone} подтверждён.`,
     reply_markup: { remove_keyboard: true },
   });
-  return tg("sendMessage", { chat_id: chatId, text: "Добро пожаловать в RAMP 👇", reply_markup: shopButton() });
+  const p = await ensureProfile(msg.from);
+  if (await isAdmin(msg.from.id)) {
+    await tg("sendMessage", { chat_id: chatId, text: "Вы администратор RAMP. Панель управления 👇", reply_markup: adminButtons });
+  }
+  return tg("sendMessage", {
+    chat_id: chatId,
+    text: `Готово! Ваш номер клиента №${p.user_no}. Магазин открыт 👇`,
+    reply_markup: shopButton(),
+  });
 }
 
 async function onMessage(msg: any) {
@@ -105,7 +115,9 @@ async function onMessage(msg: any) {
 
   if (text.startsWith("/myid")) {
     const p = await ensureProfile(msg.from);
-    return tg("sendMessage", { chat_id: chatId, text: `Ваш ID в RAMP: ${p.public_id}\nTelegram ID: ${fromId}` });
+    return tg("sendMessage", {
+      chat_id: chatId, text: `Номер клиента: №${p.user_no}\nID в RAMP: ${p.public_id}\nTelegram ID: ${fromId}`,
+    });
   }
 
   const admin = fromId ? await isAdmin(fromId) : false;
@@ -137,7 +149,7 @@ async function onMessage(msg: any) {
 
   return tg("sendMessage", {
     chat_id: chatId,
-    text: "Всё делается в магазине: каталог, поиск по фото, корзина и заказы 👇",
+    text: `Всё делается в магазине: каталог, поиск по фото, корзина и заказы 👇\nВопросы — @${SUPPORT_USERNAME}`,
     reply_markup: shopButton(),
   });
 }
@@ -145,6 +157,16 @@ async function onMessage(msg: any) {
 async function onCallback(cb: any) {
   const answer = (text: string) => tg("answerCallbackQuery", { callback_query_id: cb.id, text });
   if (!cb.from?.id || !(await isAdmin(cb.from.id))) return answer("Нет доступа");
+
+  const rc = /^rc:(ok|no):(\d+)$/.exec(cb.data ?? "");
+  if (rc) {
+    const res = await reviewReceipt(Number(rc[2]), rc[1] === "ok");
+    if (!res.ok) return answer(res.error!);
+    if (cb.message) {
+      await tg("editMessageReplyMarkup", { chat_id: cb.message.chat.id, message_id: cb.message.message_id, reply_markup: { inline_keyboard: [] } });
+    }
+    return answer(rc[1] === "ok" ? `Заказ №${rc[2]}: оплата подтверждена` : `Заказ №${rc[2]}: чек отклонён, клиент уведомлён`);
+  }
 
   const m = /^st:(\d+):(\w+)$/.exec(cb.data ?? "");
   if (!m || !STATUS[m[2]]) return answer("Неизвестная команда");

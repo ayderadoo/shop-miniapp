@@ -2,6 +2,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 
 export const MINIAPP_URL = "https://shop-miniapp-two.vercel.app";
 export const ADMIN_URL = `${MINIAPP_URL}/admin.html`;
+export const SUPPORT_USERNAME = "ramphelper";
 
 export const sb = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -11,6 +12,7 @@ export const sb = createClient(
 
 export const STATUS: Record<string, string> = {
   new: "Новый — ждёт оплаты",
+  review: "Чек на проверке",
   paid: "Оплачен",
   bought: "Выкуплен в Китае",
   shipping: "В пути",
@@ -36,7 +38,11 @@ export const DEFAULT_PAYMENTS: Record<string, string> = {
   uzum: "Uzum Bank",
 };
 
-type Config = { botToken: string; admins: number[]; promo: Promo; payments: Record<string, string> };
+export const DEFAULT_CARDS = ["8600 0000 0000 0001"];
+
+type Config = {
+  botToken: string; admins: number[]; promo: Promo; payments: Record<string, string>; cards: string[];
+};
 let cache: { at: number; cfg: Config } | null = null;
 
 // Настройки из базы (токен бота, админы, скидки, оплата). Кэш на 20 секунд.
@@ -55,6 +61,7 @@ export async function cfg(): Promise<Config> {
     admins,
     promo: { ...DEFAULT_PROMO, ...(m.promo ?? {}) },
     payments: m.payments && Object.keys(m.payments).length ? m.payments : DEFAULT_PAYMENTS,
+    cards: Array.isArray(m.payment_cards) && m.payment_cards.length ? m.payment_cards : DEFAULT_CARDS,
   };
   cache = { at: Date.now(), cfg: c };
   return c;
@@ -91,19 +98,23 @@ export type TgUser = { id: number; first_name?: string; last_name?: string; user
 // Проверка подписи Telegram для запросов из мини-эппа и админ-панели
 export async function verifyInitData(initData: string): Promise<TgUser | null> {
   const token = (await cfg()).botToken;
-  if (!initData || !token) return null;
+  if (!token) { console.error("auth: bot token is not configured"); return null; }
+  if (!initData) { console.error("auth: request without Telegram initData"); return null; }
   const params = new URLSearchParams(initData);
   const hash = params.get("hash");
-  if (!hash) return null;
+  if (!hash) { console.error("auth: initData without hash"); return null; }
   params.delete("hash");
   const dataCheck = [...params.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([k, v]) => `${k}=${v}`)
     .join("\n");
   const secret = await hmac(enc.encode("WebAppData"), token);
-  if (!safeEqual(hex(await hmac(secret, dataCheck)), hash)) return null;
+  if (!safeEqual(hex(await hmac(secret, dataCheck)), hash)) {
+    console.error("auth: signature mismatch — the Mini App was opened from a different bot than the configured token");
+    return null;
+  }
   const authDate = Number(params.get("auth_date") ?? 0);
-  if (Date.now() / 1000 - authDate > 7 * 86400) return null;
+  if (Date.now() / 1000 - authDate > 7 * 86400) { console.error("auth: initData expired"); return null; }
   try {
     const user = JSON.parse(params.get("user") ?? "null");
     return user?.id ? user : null;
@@ -139,9 +150,18 @@ export function statusKeyboard(orderId: number) {
   };
 }
 
+export function receiptKeyboard(orderId: number) {
+  return {
+    inline_keyboard: [[
+      { text: "✅ Оплата подтверждена", callback_data: `rc:ok:${orderId}` },
+      { text: "❌ Отклонить", callback_data: `rc:no:${orderId}` },
+    ]],
+  };
+}
+
 // Отправить уведомление всем админам и запомнить сообщения, чтобы ответ свайпом дошёл до клиента
 export async function notifyAdmins(
-  kind: "order" | "photo", refId: number, method: string, payload: Record<string, unknown>,
+  kind: "order" | "photo" | "receipt", refId: number, method: string, payload: Record<string, unknown>,
 ) {
   const { admins } = await cfg();
   await Promise.all(admins.map(async (chat_id) => {
@@ -235,6 +255,27 @@ export async function setOrderStatus(orderId: number, status: string) {
     reply_markup: shopButton("Мои заказы"),
   });
   return order;
+}
+
+// Проверка чека админом: подтвердить (→ «Оплачен») или отклонить (→ снова ждёт оплаты)
+export async function reviewReceipt(orderId: number, approve: boolean, reason = "") {
+  const { data: o } = await sb.from("orders").select("id,telegram_id,status").eq("id", orderId).maybeSingle();
+  if (!o) return { ok: false, error: "Заказ не найден" };
+  if (o.status !== "review") return { ok: false, error: `Чек уже обработан: ${STATUS[o.status] ?? o.status}` };
+  if (approve) {
+    await setOrderStatus(orderId, "paid");
+    return { ok: true };
+  }
+  const why = reason || "Чек не прошёл проверку";
+  await sb.from("orders").update({ status: "new", reject_reason: why, updated_at: new Date().toISOString() })
+    .eq("id", orderId);
+  await tg("sendMessage", {
+    chat_id: o.telegram_id,
+    text: `❌ Оплата по заказу №${orderId} не подтверждена: ${why}.\n\n` +
+      "Проверьте сумму и реквизиты и загрузите чек ещё раз в разделе «Заказы».",
+    reply_markup: shopButton("Мои заказы"),
+  });
+  return { ok: true };
 }
 
 // Ответ клиенту по фотозаявке (из бота или админ-панели)

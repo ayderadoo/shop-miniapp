@@ -136,7 +136,7 @@
   <div class="head">
     <div class="wm">RAMP<small>админ</small></div>
     <div class="stats" id="stats">
-      <div class="stat"><b id="sNew">—</b><span>новых заказов</span></div>
+      <div class="stat"><b id="sNew">—</b><span>ждут оплаты/проверки</span></div>
       <div class="stat"><b id="sRev">—</b><span>оплачено за 30 дн.</span></div>
       <div class="stat"><b id="sUsers">—</b><span>клиентов</span></div>
     </div>
@@ -147,7 +147,7 @@
   <!-- ЗАКАЗЫ -->
   <section class="view active" id="v-orders">
     <div class="bar">
-      <input id="oSearch" type="search" placeholder="Номер заказа, имя или телефон">
+      <input id="oSearch" type="search" placeholder="Номер заказа или клиента, имя, телефон">
       <div class="chips" id="oChips"></div>
     </div>
     <div class="list" id="oList"></div>
@@ -167,7 +167,7 @@
   <section class="view" id="v-users">
     <div class="bar">
       <h1>Клиенты</h1>
-      <input id="uSearch" type="search" placeholder="RAMP-ID, имя, @username или телефон">
+      <input id="uSearch" type="search" placeholder="Номер клиента, имя, @username, телефон или RAMP-ID">
       <div class="chips" id="uChips"></div>
     </div>
     <div class="list" id="uList"></div>
@@ -263,8 +263,8 @@
       rStatus: "new", requests: [],
       stack: [],
     };
-    const ORDER_FLOW = ["new", "paid", "bought", "shipping", "arrived", "delivered", "cancelled"];
-    const pillCls = (s) => s === "new" ? "new" : s === "delivered" ? "done" : s === "cancelled" ? "off" : "";
+    const ORDER_FLOW = ["new", "review", "paid", "bought", "shipping", "arrived", "delivered", "cancelled"];
+    const pillCls = (s) => s === "new" || s === "review" ? "new" : s === "delivered" ? "done" : s === "cancelled" ? "off" : "";
 
     /* ---------- Лист (карточка) со стеком: клиент → заказ → назад ---------- */
     function openSheet(render) { S.stack.push({ render, cur: S.cur }); render(); $("sheet").scrollTop = 0; $("sheet").classList.add("open"); tg?.BackButton.show(); }
@@ -286,10 +286,10 @@
       try {
         const s = await api("stats");
         S.statuses = s.statuses;
-        $("sNew").textContent = s.byStatus.new || 0;
+        $("sNew").textContent = (s.byStatus.new || 0) + (s.byStatus.review || 0);
         $("sRev").textContent = num(s.revenue30);
         $("sUsers").textContent = s.users;
-        $("bOrders").textContent = s.byStatus.new || 0; $("bOrders").classList.toggle("show", !!s.byStatus.new);
+        $("bOrders").textContent = s.byStatus.review || 0; $("bOrders").classList.toggle("show", !!s.byStatus.review);
         $("bReq").textContent = s.newRequests; $("bReq").classList.toggle("show", !!s.newRequests);
         S.counts = s.byStatus;
         renderOrderChips();
@@ -320,7 +320,7 @@
         $("oList").innerHTML = S.orders.length ? S.orders.map((o) => `
           <button class="card" data-order="${o.id}">
             <div class="row"><span class="strong">№${o.id} · ${fmt(o.total)}</span><span class="pill ${pillCls(o.status)}">${esc(S.statuses[o.status] || o.status)}</span></div>
-            <div class="muted" style="margin-top:4px">${dt(o.created_at)} · ${esc(o.full_name || who(o.user))} · ${esc(o.user?.public_id || "")}</div>
+            <div class="muted" style="margin-top:4px">${dt(o.created_at)} · Клиент №${o.user?.user_no ?? "?"} · ${esc(o.full_name || who(o.user))}</div>
             <div class="small ellipsis" style="margin-top:4px">${o.items.map((i) => `${esc(i.name)} × ${i.qty}`).join(", ")}</div>
           </button>`).join("") : `<div class="empty">Заказов нет</div>`;
       } catch (e) { lockOut(e); }
@@ -337,7 +337,22 @@
           ${o.discount_amount ? `<div class="kv"><span>${esc(o.discount_reason)} ${o.discount_pct}%</span><span>−${fmt(o.discount_amount)}</span></div>` : ""}
           <div class="kv"><span class="strong" style="color:var(--text)">К оплате</span><span class="strong">${fmt(o.total)}</span></div>
           <div class="kv"><span>Оплата</span><span>${esc(S.payments[o.payment_method] || o.payment_method || "—")}</span></div>
+          <div class="kv"><span>Карта для оплаты</span><span>${esc(o.pay_card || "—")}</span></div>
         </div>
+        ${o.receipt_url || o.status === "review" ? `
+        <div class="section">
+          <h3>Чек об оплате</h3>
+          ${o.receipt_url ? `<img class="req-img" src="${esc(o.receipt_url)}" alt="Чек клиента">` : ""}
+          ${o.receipt_at ? `<div class="muted">Отправлен ${dt(o.receipt_at)}</div>` : ""}
+          ${o.status === "review" ? `
+            <div class="btns" style="margin-top:10px">
+              <button class="btn" data-act="approve">✅ Подтвердить</button>
+              <button class="btn danger" data-act="reject">❌ Отклонить</button>
+            </div>
+            <label>Причина отказа (увидит клиент)</label>
+            <input id="eoReason" placeholder="Например: сумма не совпадает">` : ""}
+          ${o.reject_reason && o.status === "new" ? `<div class="muted" style="margin-top:8px;color:var(--danger)">Отклонён: ${esc(o.reject_reason)}</div>` : ""}
+        </div>` : ""}
         <div class="section">
           <h3>Статус</h3>
           <div class="btns">${ORDER_FLOW.map((k) => `<button class="stbtn ${o.status === k ? "on" : ""}" data-setst="${k}">${esc(S.statuses[k])}</button>`).join("")}</div>
@@ -345,7 +360,7 @@
         </div>
         <div class="section">
           <h3>Клиент</h3>
-          <button class="link" data-user="${o.telegram_id}">${esc(o.full_name || who(o.user) || "Открыть")} · ${esc(o.user?.public_id || "")}</button>
+          <button class="link" data-user="${o.telegram_id}">Клиент №${o.user?.user_no ?? "?"} · ${esc(o.full_name || who(o.user) || "Открыть")}</button>
           <label>Имя</label><input id="eoName" value="${esc(o.full_name)}">
           <label>Телефон</label><input id="eoPhone" value="${esc(o.phone)}">
           <label>Адрес</label><textarea id="eoAddr">${esc(o.address)}</textarea>
@@ -441,7 +456,7 @@
         $("uChips").innerHTML = `<button class="chip ${!S.uFilter ? "on" : ""}" data-uf="">Все</button><button class="chip ${S.uFilter === "blocked" ? "on" : ""}" data-uf="blocked">Заблокированные</button>`;
         $("uList").innerHTML = S.users.length ? S.users.map((u) => `
           <button class="card" data-user="${u.telegram_id}">
-            <div class="row"><span class="strong ellipsis">${esc(u.full_name || [u.first_name, u.last_name].filter(Boolean).join(" ") || "Без имени")}</span><span class="muted">${esc(u.public_id)}</span></div>
+            <div class="row"><span class="strong ellipsis">№${u.user_no} · ${esc(u.full_name || [u.first_name, u.last_name].filter(Boolean).join(" ") || "Без имени")}</span><span class="muted">${esc(u.public_id)}</span></div>
             <div class="muted" style="margin-top:4px">${u.username ? "@" + esc(u.username) + " · " : ""}${esc(u.tg_phone || u.phone || "номер не подтверждён")}</div>
             ${u.blocked ? `<span class="pill red" style="margin-top:6px;display:inline-block">Заблокирован</span>` : ""}
           </button>`).join("") : `<div class="empty">Никого не нашли</div>`;
@@ -452,11 +467,12 @@
       let d;
       try { d = await api("user", { id }); } catch (e) { return toast(e.message); }
       const u = d.user;
-      const name = u.full_name || [u.first_name, u.last_name].filter(Boolean).join(" ") || "Без имени";
+      const name = `№${u.user_no} · ` + (u.full_name || [u.first_name, u.last_name].filter(Boolean).join(" ") || "Без имени");
       S.cur = { type: "user", u, blocked: u.blocked };
       const render = () => setSheet(name, `
         <div class="section">
-          <div class="kv"><span>ID</span><span class="strong">${esc(u.public_id)}</span></div>
+          <div class="kv"><span>Номер клиента</span><span class="strong">№${u.user_no}</span></div>
+          <div class="kv"><span>ID для друзей</span><span>${esc(u.public_id)}</span></div>
           <div class="kv"><span>Telegram</span><span>${u.username ? "@" + esc(u.username) : "—"} · ${u.telegram_id}</span></div>
           <div class="kv"><span>Телефон Telegram</span><span>${esc(u.tg_phone || "не подтверждён")}</span></div>
           <div class="kv"><span>С нами с</span><span>${day(u.created_at)}</span></div>
@@ -554,6 +570,12 @@
           <button class="btn sec sm" data-act="addPay" style="margin-top:10px">+ Способ оплаты</button>
         </div>
         <div class="section">
+          <h3>Карты для оплаты</h3>
+          <div class="muted">Клиенту после заказа выдаётся одна из этих карт случайно</div>
+          <div id="cardRows">${(d.cards || []).map((c) => cardRow(c)).join("")}</div>
+          <button class="btn sec sm" data-act="addCard" style="margin-top:10px">+ Карта</button>
+        </div>
+        <div class="section">
           <button class="btn" data-act="saveSettings">Сохранить скидки и оплату</button>
         </div>
         <div class="section">
@@ -572,6 +594,9 @@
           <div class="muted" style="margin-top:8px">Telegram ID человек может узнать командой /myid в боте.</div>
         </div>`;
     }
+    const cardRow = (v) => `<div class="row card-row" style="gap:8px;margin-top:8px">
+      <input data-card value="${esc(v)}" inputmode="numeric" placeholder="8600 0000 0000 0000">
+      <button class="link" style="color:var(--danger)" data-delcard>Убрать</button></div>`;
     const payRow = (k, v) => `<div class="row pay-row" style="gap:8px;margin-top:8px">
       <input data-paykey="${esc(k)}" value="${esc(v)}" placeholder="Например: Click">
       <button class="link" style="color:var(--danger)" data-delpay>Убрать</button></div>`;
@@ -655,6 +680,15 @@
           loadOrders();
         }, "Сохранено");
       }
+      if (a === "approve" || a === "reject") {
+        const o = S.cur.o;
+        return run(act, async () => {
+          await api("reviewReceipt", { id: o.id, approve: a === "approve", reason: $("eoReason")?.value || "" });
+          o.status = a === "approve" ? "paid" : "new";
+          if (a === "reject") o.reject_reason = $("eoReason")?.value || "Чек не прошёл проверку";
+          S.cur.render(); loadOrders(); loadStats();
+        }, a === "approve" ? "Оплата подтверждена, клиент уведомлён" : "Чек отклонён, клиент уведомлён");
+      }
       if (a === "msg" || a === "msgUser") {
         const box = a === "msg" ? $("eoMsg") : $("euMsg");
         const id = a === "msg" ? S.cur.o.telegram_id : S.cur.u.telegram_id;
@@ -698,10 +732,13 @@
     $("sBox").addEventListener("click", (e) => {
       const dp = e.target.closest("[data-delpay]");
       if (dp) return dp.closest(".pay-row").remove();
+      const dcr = e.target.closest("[data-delcard]");
+      if (dcr) return dcr.closest(".card-row").remove();
       const da = e.target.closest("[data-deladmin]");
       if (da) return run(da, async () => { await api("removeAdmin", { id: Number(da.dataset.deladmin) }); loadSettings(); }, "Администратор удалён");
       const act = e.target.closest("[data-act]");
       if (!act) return;
+      if (act.dataset.act === "addCard") { $("cardRows").insertAdjacentHTML("beforeend", cardRow("")); return; }
       if (act.dataset.act === "addPay") {
         const key = "pay" + Date.now().toString(36);
         $("payRows").insertAdjacentHTML("beforeend", payRow(key, ""));
@@ -714,6 +751,7 @@
           await api("saveSettings", {
             promo: { welcomePct: $("stWp").value, welcomeDays: $("stWd").value, inviterPct: $("stIp").value, inviteeNextPct: $("stIn").value, minQualifyingOrder: String($("stMin").value).replace(/\s/g, "") },
             payments,
+            cards: [...document.querySelectorAll("[data-card]")].map((i) => i.value.trim()).filter(Boolean),
           });
         }, "Настройки сохранены");
       }

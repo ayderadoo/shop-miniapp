@@ -201,7 +201,7 @@
     .grid.list { grid-template-columns: 1fr; gap: 8px; }
     .grid.list .card { display: flex; align-items: stretch; }
     .grid.list .card .img { width: 104px; height: 104px; aspect-ratio: auto; flex: none; }
-    .grid.list .card .info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; padding-right: 50px; }
+    .grid.list .card .info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; padding-right: 100px; }
     .grid.list .card .heart { top: 50%; transform: translateY(-50%); right: 10px; background: var(--bg2); }
     .grid.list .badge-out { top: auto; bottom: 8px; left: 8px; font-size: 10px; }
 
@@ -298,6 +298,43 @@
     .sheet-bar .heart-btn { flex: none; width: 52px; border-radius: 12px; background: var(--bg2); font-size: 20px; }
     .stock-note { color: var(--danger); font-size: 14px; font-weight: 600; margin-top: 4px; }
 
+    /* Экран входа: подтверждение номера */
+    .gate { position: fixed; inset: 0; z-index: 70; background: var(--lapis); color: #fff; display: none;
+      flex-direction: column; justify-content: center; padding: 32px 24px calc(32px + var(--safe-b)); }
+    .gate.show { display: flex; }
+    .gate::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 38%;
+      background: var(--tile); clip-path: polygon(0 35%, 100% 0, 100% 100%, 0 100%); opacity: .95; z-index: 0; }
+    .gate > * { position: relative; z-index: 1; }
+    .gate .wordmark { font-size: 54px; margin-bottom: 18px; }
+    .gate h2 { font-size: 24px; font-weight: 800; line-height: 1.2; margin-bottom: 10px; }
+    .gate p { font-size: 15px; line-height: 1.5; color: rgba(255,255,255,.88); max-width: 34ch; }
+    .gate .btn { background: #fff; color: var(--lapis); margin-top: 26px; }
+    .gate .muted { color: rgba(255,255,255,.75); margin-top: 12px; font-size: 13px; }
+
+    /* Кнопка «в корзину» на карточке и полёт товара в корзину */
+    .add { position: absolute; right: 8px; bottom: 8px; width: 36px; height: 36px; border-radius: 12px;
+      background: var(--lapis); color: #fff; font-size: 22px; font-weight: 700; line-height: 1;
+      display: flex; align-items: center; justify-content: center; }
+    .add.in { background: var(--tile); color: var(--ink); font-size: 14px; font-weight: 800; }
+    .card .info { padding-right: 50px; }
+    .grid.list .add { top: auto; bottom: 12px; right: 56px; }
+    .fly { position: fixed; z-index: 80; border-radius: 14px; object-fit: cover; pointer-events: none;
+      box-shadow: 0 8px 24px rgba(20,24,58,.25); background: var(--bg2); }
+    @keyframes bump { 0% { transform: scale(1); } 40% { transform: scale(1.45); } 100% { transform: scale(1); } }
+    .count.bump { animation: bump .45s ease; }
+    @keyframes pop { 0% { transform: scale(1); } 50% { transform: scale(.92); } 100% { transform: scale(1); } }
+    .popped { animation: pop .25s ease; }
+
+    /* Оплата заказа */
+    .paybox { background: var(--bg2); border-radius: 12px; padding: 12px; margin-top: 10px; }
+    .paybox .cardno { font-family: var(--display); font-size: 18px; letter-spacing: 1px; margin: 6px 0 10px; }
+    .paybox .row2 { display: flex; gap: 8px; }
+    .paybox .row2 .btn { padding: 11px 10px; font-size: 14px; }
+    .paybox .btn.secondary { background: var(--bg); }
+    .reject { color: var(--danger); font-size: 13px; font-weight: 600; margin-top: 8px; }
+    .status.wait { background: color-mix(in srgb, var(--sun) 35%, transparent); color: #8a5a00; }
+    :root[data-theme="dark"] .status.wait { color: var(--sun); }
+
     .toast {
       position: fixed; left: 50%; bottom: calc(var(--tabbar) + var(--safe-b) + 14px); transform: translateX(-50%) translateY(20px);
       background: rgba(20,20,20,.92); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 14px;
@@ -392,10 +429,13 @@
 
     <div class="section id-card">
       <div>
-        <div class="muted">Ваш ID</div>
-        <div class="val" id="meId">—</div>
+        <div class="muted">Номер клиента</div>
+        <div class="val" id="meNo">—</div>
       </div>
-      <button class="pill-btn" id="copyId">Копировать</button>
+      <div style="text-align:right">
+        <div class="muted">ID для друзей</div>
+        <button class="pill-btn" id="copyId" style="margin-top:4px"><span id="meId">—</span></button>
+      </div>
     </div>
 
     <button class="rank-card" id="discCard" data-open-sheet="discounts" style="display:block;width:calc(100% - 32px);text-align:left">
@@ -418,7 +458,7 @@
       </button>
       <button class="item" data-open-sheet="delivery">
         <svg class="ic" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
-        <span class="t">Данные доставки<small id="mDelivery">не указаны</small></span><i class="chev"></i>
+        <span class="t">Данные получателя<small id="mDelivery">не указаны</small></span><i class="chev"></i>
       </button>
       <button class="item" id="phoneItem">
         <svg class="ic" viewBox="0 0 24 24"><path d="M6.5 3h3l1.5 4.5-2 1.5a12 12 0 0 0 6 6l1.5-2 4.5 1.5v3a2 2 0 0 1-2 2A17 17 0 0 1 4.5 5a2 2 0 0 1 2-2z"/></svg>
@@ -467,6 +507,10 @@
         <svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5.5" width="18" height="13" rx="2.5"/><path d="M3 10h18M7 15h4"/></svg>
         <span class="t">Способы оплаты</span><i class="chev"></i>
       </button>
+      <button class="item" id="supportItem">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M21 12a8.5 8.5 0 0 1-12.4 7.6L3 21l1.5-5.2A8.5 8.5 0 1 1 21 12z"/><path d="M8.5 11h.01M12 11h.01M15.5 11h.01"/></svg>
+        <span class="t">Поддержка<small id="mSupport">@ramphelper</small></span><i class="chev"></i>
+      </button>
     </div>
     <div style="height:8px"></div>
   </section>
@@ -509,23 +553,37 @@
       <div id="coPay"></div>
     </div>
     <div class="section">
-      <label for="coName">Имя и фамилия *</label>
-      <input id="coName" maxlength="120" autocomplete="name">
-      <label for="coPhone">Телефон *</label>
+      <h3>Получатель</h3>
+      <div class="muted">На эти данные оформляется посылка — заполните как в паспорте</div>
+      <label for="coName">Фамилия и имя *</label>
+      <input id="coName" maxlength="120" autocomplete="name" placeholder="Каримов Азиз">
+      <label for="coPhone">Телефон получателя *</label>
       <input id="coPhone" type="tel" maxlength="30" placeholder="+998 __ ___ __ __" autocomplete="tel">
-      <label for="coAddress">Адрес доставки *</label>
-      <textarea id="coAddress" maxlength="300" placeholder="Город, улица, дом, квартира"></textarea>
+      <label for="coCity">Город *</label>
+      <input id="coCity" maxlength="60" placeholder="Ташкент">
+      <label for="coAddress">Адрес *</label>
+      <textarea id="coAddress" maxlength="300" placeholder="Улица, дом, квартира, ориентир"></textarea>
       <label for="coComment">Комментарий</label>
       <textarea id="coComment" maxlength="500" placeholder="Необязательно"></textarea>
     </div>
     <div class="section muted">
-      Оплата 100% после оформления: менеджер пришлёт реквизиты выбранным способом.
-      Статус заказа будет виден во вкладке «Заказы».
+      После оформления вы получите номер карты для оплаты. Переведите сумму и отправьте скриншот чека
+      в разделе «Заказы» — после проверки заказ будет подтверждён.
     </div>
   </div>
   <div class="sheet-bar" id="checkoutBar">
     <button class="btn" id="coSubmit">Подтвердить заказ</button>
   </div>
+
+  <!-- Вход: без подтверждённого номера магазин закрыт -->
+  <div class="gate" id="gate">
+    <div class="wordmark">RAMP</div>
+    <h2 id="gateTitle">Подтвердите номер телефона</h2>
+    <p id="gateText">Чтобы пользоваться магазином, оформлять заказы и получать уведомления о доставке, поделитесь номером из Telegram.</p>
+    <button class="btn" id="gateBtn">📱 Поделиться номером</button>
+    <div class="muted" id="gateNote">Номер видят только администраторы магазина</div>
+  </div>
+  <input type="file" id="receiptInput" accept="image/*" hidden>
 
   <!-- Нижние вкладки -->
   <nav class="tabbar" id="tabbar">
@@ -597,9 +655,9 @@
       tab: "catalog", openProductId: null, photoData: null,
     };
 
-    const ACTIVE = ["new", "paid", "bought", "shipping", "arrived"];
+    const ACTIVE = ["new", "review", "paid", "bought", "shipping", "arrived"];
     const STATUS = {
-      new: "Ждёт оплаты", paid: "Оплачен", bought: "Выкуплен в Китае", shipping: "В пути",
+      new: "Ждёт оплаты", review: "Чек на проверке", paid: "Оплачен", bought: "Выкуплен в Китае", shipping: "В пути",
       arrived: "Прибыл в Ташкент", delivered: "Доставлен", cancelled: "Отменён",
     };
 
@@ -678,6 +736,9 @@
             <div class="price">${fmt(p.price)}</div>
             <div class="name">${esc(p.name)}</div>
           </div>
+          ${p.in_stock ? (cartQty(p.id)
+            ? `<button class="add in" data-add="${p.id}" aria-label="В корзине">${cartQty(p.id)}</button>`
+            : `<button class="add" data-add="${p.id}" aria-label="В корзину">+</button>`) : ""}
         </div>`;
     }
 
@@ -768,6 +829,32 @@
     }
 
     /* ---------- Корзина и желаемое ---------- */
+    // Анимация: картинка товара улетает в корзину на нижней панели
+    function flyToCart(fromEl) {
+      const target = document.querySelector('.tab[data-tab="cart"] svg');
+      const src = fromEl?.closest(".card, #productSheet, .row")?.querySelector("img.img, img.thumb, #psImg img, .img, .thumb");
+      if (!target || !src || matchMedia("(prefers-reduced-motion: reduce)").matches) return bumpCart();
+      const a = src.getBoundingClientRect();
+      const b = target.getBoundingClientRect();
+      const size = Math.min(a.width, 120);
+      const fly = src.tagName === "IMG" ? src.cloneNode() : Object.assign(document.createElement("div"), { textContent: "RAMP" });
+      fly.className = "fly";
+      if (fly.tagName !== "IMG") Object.assign(fly.style, { display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--display)", color: "var(--hint)" });
+      Object.assign(fly.style, { left: a.left + (a.width - size) / 2 + "px", top: a.top + (a.height - size) / 2 + "px", width: size + "px", height: size + "px" });
+      document.body.appendChild(fly);
+      const dx = b.left + b.width / 2 - (a.left + a.width / 2);
+      const dy = b.top + b.height / 2 - (a.top + a.height / 2);
+      fly.animate([
+        { transform: "translate(0,0) scale(1)", opacity: 1 },
+        { transform: `translate(${dx * 0.5}px, ${dy * 0.35 - 80}px) scale(.6)`, opacity: 1, offset: 0.5 },
+        { transform: `translate(${dx}px, ${dy}px) scale(.12)`, opacity: .4 },
+      ], { duration: 650, easing: "cubic-bezier(.5,0,.6,1)" }).onfinish = () => { fly.remove(); bumpCart(); };
+    }
+    function bumpCart() {
+      const c = $("cartCount");
+      c.classList.remove("bump"); void c.offsetWidth; c.classList.add("bump");
+    }
+
     async function setQty(productId, qty) {
       try {
         haptic();
@@ -832,7 +919,8 @@
       const p = state.profile || {};
       $("coName").value = p.full_name || [p.first_name, p.last_name].filter(Boolean).join(" ");
       $("coPhone").value = p.phone || p.tg_phone || "";
-      $("coAddress").value = [p.city, p.address].filter(Boolean).join(", ");
+      $("coCity").value = p.city || "";
+      $("coAddress").value = p.address || "";
       $("coPhoneNotice").style.display = p.tg_phone ? "none" : "block";
       if (!state.payment) state.payment = store.get("ramp:pay") || Object.keys(state.payments)[0] || null;
       renderPayments();
@@ -874,10 +962,16 @@
     async function submitOrder() {
       const payload = {
         full_name: $("coName").value.trim(), phone: $("coPhone").value.trim(),
-        address: $("coAddress").value.trim(), comment: $("coComment").value.trim(),
+        city: $("coCity").value.trim(), address: $("coAddress").value.trim(), comment: $("coComment").value.trim(),
         payment_method: state.payment,
       };
-      if (!payload.full_name || !payload.phone || !payload.address) { toast("Заполните имя, телефон и адрес"); return; }
+      const need = [
+        [payload.full_name.split(/\s+/).length < 2, "coName", "Укажите фамилию и имя получателя"],
+        [payload.phone.replace(/\D/g, "").length < 9, "coPhone", "Укажите телефон получателя"],
+        [!payload.city, "coCity", "Укажите город"],
+        [payload.address.length < 5, "coAddress", "Укажите адрес: улица, дом, квартира"],
+      ].find(([bad]) => bad);
+      if (need) { toast(need[2]); $(need[1]).focus(); $(need[1]).scrollIntoView({ block: "center", behavior: "smooth" }); return; }
       if (!payload.payment_method) { toast("Выберите способ оплаты"); return; }
       if (!state.profile?.tg_phone) { requestPhone(); return; }
       const btn = $("coSubmit");
@@ -892,7 +986,7 @@
         closeSheets();
         renderCart(); updateBadges();
         showTab("orders");
-        toast(`Заказ №${order.id} оформлен! Менеджер пришлёт реквизиты для оплаты`);
+        toast(`Заказ №${order.id} оформлен! Оплатите на карту и отправьте чек`);
       } catch (e) {
         if (e.code === "need_phone") requestPhone();
         else { toast(e.message); refreshQuote(); }
@@ -935,7 +1029,7 @@
 
     function orderCard(o) {
       const idx = ACTIVE.indexOf(o.status);
-      const cls = o.status === "delivered" ? "done" : o.status === "cancelled" ? "off" : "";
+      const cls = o.status === "delivered" ? "done" : o.status === "cancelled" ? "off" : (o.status === "new" || o.status === "review") ? "wait" : "";
       const items = o.items.map((i) => `${esc(i.name)} × ${i.qty}`).join(", ");
       const saved = o.discount_amount || 0;
       const pay = state.payments[o.payment_method];
@@ -951,6 +1045,17 @@
           ${pay ? `<div class="muted" style="margin-top:6px">Оплата: ${esc(pay)}</div>` : ""}
           ${saved ? `<div class="muted" style="margin-top:2px">${esc(o.discount_reason || "Скидка")} ${o.discount_pct}%: −${fmt(saved)}</div>` : ""}
           <div class="total" style="margin:10px 0 0"><span class="muted">Сумма</span><b style="font-size:17px">${fmt(o.total)}</b></div>
+          ${o.status === "new" ? `
+            <div class="paybox">
+              <div class="muted">Переведите <b style="color:var(--text)">${fmt(o.total)}</b> на карту:</div>
+              <div class="cardno">${esc(o.pay_card || "—")}</div>
+              <div class="row2">
+                <button class="btn secondary" data-copycard="${esc(o.pay_card || "")}">Копировать</button>
+                <button class="btn" data-receipt="${o.id}">Отправить чек</button>
+              </div>
+              ${o.reject_reason ? `<div class="reject">Прошлый чек отклонён: ${esc(o.reject_reason)}</div>` : ""}
+            </div>` : ""}
+          ${o.status === "review" ? `<div class="paybox muted">Чек отправлен ${date(o.receipt_at)} — проверяем оплату. Обычно это занимает до нескольких часов.</div>` : ""}
         </div>`;
     }
 
@@ -970,6 +1075,22 @@
       box.querySelector("details")?.addEventListener("toggle", (e) => {
         $("doneOrders").style.display = e.target.open ? "block" : "none";
       });
+    }
+
+    let receiptFor = null;
+    async function onReceiptPicked(e) {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file || !receiptFor) return;
+      toast("Отправляем чек…");
+      try {
+        const image = await compressImage(file);
+        const { orders } = await api("uploadReceipt", { order_id: receiptFor, image });
+        state.orders = orders;
+        tg?.HapticFeedback?.notificationOccurred("success");
+        toast("Чек отправлен на проверку");
+        renderOrders(); updateBadges();
+      } catch (err) { toast(err.message); }
     }
 
     /* ---------- Поиск по фото ---------- */
@@ -1068,6 +1189,7 @@
       $("meUser").textContent = u?.username ? "@" + u.username : (inTelegram ? "" : "Откройте магазин через Telegram");
       $("avatar").innerHTML = u?.photo_url ? `<img src="${esc(u.photo_url)}" alt="">` : esc(name[0] || "?");
       $("meId").textContent = p.public_id || "—";
+      $("meNo").textContent = p.user_no ? "№" + p.user_no : "—";
 
       if (P) {
         const c = P.current;
@@ -1086,7 +1208,7 @@
       $("mOrders").textContent = active ? `${active} активн.` : "";
       $("mWish").textContent = state.wish.length || "";
       const deliv = [p.city, p.address].filter(Boolean).join(", ");
-      $("mDelivery").textContent = deliv || "не указаны";
+      $("mDelivery").textContent = deliv ? [p.full_name, deliv].filter(Boolean).join(" · ") : "не указаны";
       $("mPhone").textContent = p.tg_phone || "не подтверждён";
       $("mPhoneAct").style.display = p.tg_phone ? "none" : "";
       $("phoneItem").disabled = !!p.tg_phone;
@@ -1099,6 +1221,8 @@
       if (d.wish) state.wish = d.wish;
       if (d.promo) state.promo = d.promo;
       if (d.is_admin !== undefined) $("adminGroup").style.display = d.is_admin ? "" : "none";
+      if (d.support) { state.support = d.support; $("mSupport").textContent = "@" + d.support; }
+      showGate(d.profile && !d.profile.tg_phone ? "phone" : null);
       if (d.payments) state.payments = d.payments;
       if (d.profile?.catalog_view && !store.get("ramp:view")) state.view = d.profile.catalog_view;
       renderProfile();
@@ -1118,12 +1242,12 @@
     const sheets = {
       delivery() {
         const p = state.profile || {};
-        openInfo("Данные доставки", `
+        openInfo("Данные получателя", `
           <div class="section">
             <div class="muted">Подставляются при оформлении заказа</div>
-            <label for="pName">Имя и фамилия</label>
+            <label for="pName">Фамилия и имя (как в паспорте)</label>
             <input id="pName" maxlength="120" autocomplete="name" value="${esc(p.full_name || "")}">
-            <label for="pPhone">Телефон для связи</label>
+            <label for="pPhone">Телефон получателя</label>
             <input id="pPhone" type="tel" maxlength="30" placeholder="+998 __ ___ __ __" autocomplete="tel" value="${esc(p.phone || p.tg_phone || "")}">
             <label for="pCity">Город</label>
             <input id="pCity" maxlength="60" placeholder="Ташкент" value="${esc(p.city || "")}">
@@ -1267,14 +1391,32 @@
       if (tab === "profile") renderProfile();
     }
 
+    // Экран входа: без подтверждённого номера магазин закрыт
+    function showGate(kind, message) {
+      const g = $("gate");
+      if (!kind) { g.classList.remove("show"); return; }
+      const t = {
+        phone: ["Подтвердите номер телефона",
+          "Чтобы пользоваться магазином, оформлять заказы и получать уведомления о доставке, поделитесь номером из Telegram.",
+          "📱 Поделиться номером", "Номер видят только администраторы магазина"],
+        outside: ["Откройте RAMP в Telegram", "Магазин работает внутри Telegram. Откройте бота и нажмите «Открыть RAMP».", "", ""],
+        error: ["Не удалось войти", message || "Попробуйте закрыть и снова открыть магазин из бота.", "Попробовать снова", "Если не помогает — напишите @ramphelper"],
+      }[kind];
+      $("gateTitle").textContent = t[0]; $("gateText").textContent = t[1];
+      $("gateBtn").textContent = t[2]; $("gateBtn").style.display = t[2] ? "" : "none";
+      $("gateNote").textContent = t[3];
+      g.dataset.kind = kind;
+      g.classList.add("show");
+    }
+
     async function init() {
       loadProducts();
-      if (!inTelegram) { renderCart(); renderWish(); return; }
+      if (!inTelegram) { renderCart(); renderWish(); showGate("outside"); return; }
       try {
         applyMe(await api("me"));
         renderCatalog(); renderWish(); updateBadges();
         loadOrders();
-      } catch (e) { toast(e.message); }
+      } catch (e) { showGate("error", e.message); }
     }
 
     /* ---------- События ---------- */
@@ -1295,19 +1437,25 @@
     for (const id of ["grid", "wishGrid"]) {
       $(id).addEventListener("click", (e) => {
         const heart = e.target.closest("[data-heart]");
-        if (heart) { e.stopPropagation(); return inTelegram ? toggleWish(Number(heart.dataset.heart)) : toast("Откройте через Telegram"); }
+        if (heart) { e.stopPropagation(); heart.classList.add("popped"); return toggleWish(Number(heart.dataset.heart)); }
+        const add = e.target.closest("[data-add]");
+        if (add) {
+          e.stopPropagation();
+          const pid = Number(add.dataset.add);
+          if (!cartQty(pid)) flyToCart(add);
+          return setQty(pid, cartQty(pid) + 1).then(() => { renderCatalog(); renderWish(); });
+        }
         const c = e.target.closest(".card");
         if (c) openProduct(c.dataset.id);
       });
     }
 
-    $("psHeart").addEventListener("click", () => inTelegram ? toggleWish(state.openProductId) : toast("Откройте через Telegram"));
+    $("psHeart").addEventListener("click", () => toggleWish(state.openProductId));
     $("psAction").addEventListener("click", (e) => {
       const act = e.target.closest("[data-act]")?.dataset.act;
       const id = state.openProductId;
       if (!act) return;
-      if (!inTelegram) return toast("Откройте через Telegram");
-      if (act === "add") setQty(id, 1).then(() => toast("Добавлено в корзину"));
+      if (act === "add") { flyToCart($("psImg")); setQty(id, 1).then(() => toast("Добавлено в корзину")); }
       if (act === "inc") setQty(id, cartQty(id) + 1);
       if (act === "dec") setQty(id, cartQty(id) - 1);
       if (act === "wish") toggleWish(id);
@@ -1326,6 +1474,21 @@
 
     $("coSubmit").addEventListener("click", submitOrder);
     $("coConfirmPhone").addEventListener("click", requestPhone);
+    $("gateBtn").addEventListener("click", () => {
+      if ($("gate").dataset.kind === "phone") return requestPhone();
+      location.reload();
+    });
+    $("receiptInput").addEventListener("change", onReceiptPicked);
+    $("ordersBox").addEventListener("click", (e) => {
+      const r = e.target.closest("[data-receipt]");
+      if (r) { receiptFor = Number(r.dataset.receipt); return $("receiptInput").click(); }
+      const c = e.target.closest("[data-copycard]");
+      if (c) return copyText(c.dataset.copycard.replace(/\s/g, ""));
+    });
+    $("supportItem").addEventListener("click", () => {
+      const url = `https://t.me/${state.support || "ramphelper"}`;
+      if (tg?.openTelegramLink) tg.openTelegramLink(url); else window.open(url, "_blank");
+    });
     $("coPay").addEventListener("click", (e) => {
       const b = e.target.closest("[data-pay]");
       if (!b) return;

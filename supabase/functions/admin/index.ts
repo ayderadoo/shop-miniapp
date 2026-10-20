@@ -1,6 +1,6 @@
 // API админ-панели. Доступ только для Telegram ID из таблицы admins.
 import {
-  answerPhotoRequest, cfg, DEFAULT_PROMO, PAID_OR_LATER, resetCfg, sb, setOrderStatus, shopButton,
+  answerPhotoRequest, cfg, DEFAULT_PROMO, PAID_OR_LATER, resetCfg, reviewReceipt, sb, setOrderStatus, shopButton,
   STATUS, tg, type TgUser, verifyInitData,
 } from "../_shared/common.ts";
 
@@ -34,9 +34,9 @@ const int = (v: unknown, name = "число") => {
 const safeSearch = (q: unknown) => str(q, 60).replace(/[,()*%\\]/g, " ").trim();
 
 const ORDER_COLS = "id,telegram_id,items,subtotal,discount_pct,discount_amount,discount_reason,total,status," +
-  "payment_method,full_name,phone,address,comment,created_at,updated_at";
+  "payment_method,full_name,phone,address,comment,pay_card,receipt_path,receipt_at,reject_reason,created_at,updated_at";
 const PROFILE_COLS = "telegram_id,public_id,first_name,last_name,username,full_name,phone,tg_phone,city," +
-  "address,referred_by,ref_rewarded,note,blocked,created_at";
+  "address,referred_by,ref_rewarded,note,blocked,user_no,created_at";
 
 async function uploadImage(dataUrl: string, folder: string) {
   const m = /^data:image\/(jpeg|png|webp);base64,(.+)$/.exec(dataUrl);
@@ -78,16 +78,35 @@ async function handle(action: string, b: any, me: TgUser) {
       if (b.status && STATUS[b.status]) q = q.eq("status", b.status);
       const s = safeSearch(b.q);
       if (s) {
-        if (/^\d+$/.test(s)) q = q.or(`id.eq.${s},phone.ilike.*${s}*`);
+        if (/^\d+$/.test(s) && s.length > 9) q = q.ilike("phone", `*${s}*`);
+        else if (/^\d+$/.test(s)) {
+          // Число: номер заказа, номер клиента или часть телефона
+          const { data: byNo } = await sb.from("profiles").select("telegram_id").eq("user_no", Number(s)).maybeSingle();
+          q = q.or([`id.eq.${s}`, `phone.ilike.*${s}*`, ...(byNo ? [`telegram_id.eq.${byNo.telegram_id}`] : [])].join(","));
+        }
         else q = q.or(`full_name.ilike.*${s}*,phone.ilike.*${s}*,address.ilike.*${s}*`);
       }
       const orders = check(await q) as any[];
       const ids = [...new Set(orders.map((o) => o.telegram_id))];
       const { data: profs } = ids.length
-        ? await sb.from("profiles").select("telegram_id,public_id,username").in("telegram_id", ids)
+        ? await sb.from("profiles").select("telegram_id,public_id,username,user_no").in("telegram_id", ids)
         : { data: [] };
       const byId = Object.fromEntries((profs ?? []).map((p: any) => [p.telegram_id, p]));
-      return { orders: orders.map((o) => ({ ...o, user: byId[o.telegram_id] ?? null })), payments: (await cfg()).payments };
+      const withReceipt = orders.filter((o) => o.receipt_path);
+      const { data: urls } = withReceipt.length
+        ? await sb.storage.from("requests").createSignedUrls(withReceipt.map((o) => o.receipt_path), 3600)
+        : { data: [] };
+      const receiptUrl = Object.fromEntries(withReceipt.map((o, i) => [o.id, urls?.[i]?.signedUrl ?? null]));
+      return {
+        orders: orders.map((o) => ({ ...o, user: byId[o.telegram_id] ?? null, receipt_url: receiptUrl[o.id] ?? null })),
+        payments: (await cfg()).payments,
+      };
+    }
+
+    case "reviewReceipt": {
+      const res = await reviewReceipt(int(b.id, "заказ"), !!b.approve, str(b.reason, 300));
+      if (!res.ok) throw new HttpError(409, res.error!);
+      return { ok: true };
     }
 
     case "setStatus": {
@@ -147,7 +166,7 @@ async function handle(action: string, b: any, me: TgUser) {
         q = q.or([
           `public_id.ilike.*${s}*`, `username.ilike.*${s}*`, `first_name.ilike.*${s}*`,
           `full_name.ilike.*${s}*`, `phone.ilike.*${s}*`, `tg_phone.ilike.*${s}*`,
-          ...(/^\d+$/.test(s) ? [`telegram_id.eq.${s}`] : []),
+          ...(/^\d+$/.test(s) ? [`telegram_id.eq.${s}`, ...(s.length <= 9 ? [`user_no.eq.${s}`] : [])] : []),
         ].join(","));
       }
       if (b.filter === "blocked") q = q.eq("blocked", true);
@@ -244,7 +263,7 @@ async function handle(action: string, b: any, me: TgUser) {
     case "settings": {
       const c = await cfg();
       const { data: admins } = await sb.from("admins").select("*").order("created_at");
-      return { promo: c.promo, payments: c.payments, admins: admins ?? [], me: me.id };
+      return { promo: c.promo, payments: c.payments, cards: c.cards, admins: admins ?? [], me: me.id };
     }
 
     case "saveSettings": {
@@ -265,9 +284,12 @@ async function handle(action: string, b: any, me: TgUser) {
         if (key && label) payments[key] = label;
       }
       if (!Object.keys(payments).length) throw new HttpError(400, "Нужен хотя бы один способ оплаты");
+      const cards = (Array.isArray(b.cards) ? b.cards : []).map((c: unknown) => str(c, 40)).filter(Boolean).slice(0, 20);
+      if (!cards.length) throw new HttpError(400, "Нужна хотя бы одна карта для оплаты");
       check(await sb.from("settings").upsert([
         { key: "promo", value: promo, updated_at: new Date().toISOString() },
         { key: "payments", value: payments, updated_at: new Date().toISOString() },
+        { key: "payment_cards", value: cards, updated_at: new Date().toISOString() },
       ], { onConflict: "key" }));
       resetCfg();
       return { ok: true };
