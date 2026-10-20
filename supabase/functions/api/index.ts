@@ -1,7 +1,7 @@
 // API мини-эппа: каждый запрос подписан Telegram (initData), иначе отказ.
 import {
-  ADMIN_ID, applyReferral, BONUS_MAX_SHARE, BOT_TOKEN, esc, fmt, getBotUsername, hex, hmac,
-  PAYMENTS, RANKS, rankFor, REFERRAL, safeEqual, sb, STATUS, tg,
+  ADMIN_ID, applyReferral, BOT_TOKEN, esc, fmt, getBotUsername, hex, hmac,
+  PAYMENTS, PROMO, safeEqual, sb, STATUS, tg,
 } from "../_shared/common.ts";
 
 const cors = {
@@ -62,7 +62,7 @@ function check<T>(res: { data: T; error: unknown }): T {
 const PRODUCT_COLS = "id,name,category,price,photo,description,active,in_stock";
 const PROFILE_COLS =
   "telegram_id,public_id,first_name,last_name,username,full_name,phone,tg_phone,city,address," +
-  "referred_by,bonus_balance,catalog_view,created_at";
+  "referred_by,ref_rewarded,catalog_view,created_at";
 
 async function getProfile(uid: number) {
   return check(await sb.from("profiles").select(PROFILE_COLS).eq("telegram_id", uid).single()) as any;
@@ -87,7 +87,7 @@ async function listWish(uid: number) {
 
 async function listOrders(uid: number) {
   return check(await sb.from("orders")
-    .select("id,items,subtotal,rank_discount,ref_discount,bonus_used,total,status,payment_method," +
+    .select("id,items,subtotal,discount_pct,discount_amount,discount_reason,total,status,payment_method," +
       "full_name,phone,address,comment,created_at")
     .eq("telegram_id", uid)
     .order("created_at", { ascending: false })
@@ -106,51 +106,58 @@ async function listPhotoRequests(uid: number) {
   return rows.map((r, i) => ({ ...r, photo_url: urls?.[i]?.signedUrl ?? null }));
 }
 
-// Ранг, бонусы, приглашения — всё, что нужно меню профиля
-async function loyalty(uid: number, profile: any) {
-  const [delivered, liveOrders, invited] = await Promise.all([
-    sb.from("orders").select("total").eq("telegram_id", uid).eq("status", "delivered"),
+const COUPON_LABEL: Record<string, string> = {
+  ref_inviter: "Купон за приглашённого друга",
+  ref_invitee: "Купон за заказ по приглашению",
+  manual: "Персональный купон",
+};
+
+// Скидки пользователя: приветственная, купоны, приглашения — всё для профиля
+async function promo(uid: number, profile: any) {
+  const [coupons, liveOrders, invited] = await Promise.all([
+    sb.from("coupons").select("id,pct,reason,created_at").eq("telegram_id", uid)
+      .is("used_order_id", null).order("pct", { ascending: false }),
     sb.from("orders").select("id", { count: "exact", head: true })
       .eq("telegram_id", uid).neq("status", "cancelled"),
     sb.from("profiles").select("telegram_id", { count: "exact", head: true }).eq("referred_by", uid),
   ]);
-  const spent = (delivered.data ?? []).reduce((s: number, o: any) => s + o.total, 0);
-  const rank = rankFor(spent);
-  const ordersCount = liveOrders.count ?? 0;
+  const welcomeUntil = new Date(new Date(profile.created_at).getTime() + PROMO.welcomeDays * 86400_000);
+  const welcomeActive = Date.now() < welcomeUntil.getTime();
+  const list = (coupons.data ?? []).map((c: any) => ({ ...c, label: COUPON_LABEL[c.reason] ?? "Купон" }));
+  const best = list[0];
+  const current = best && best.pct > (welcomeActive ? PROMO.welcomePct : 0)
+    ? { pct: best.pct, reason: best.label, coupon_id: best.id }
+    : welcomeActive ? { pct: PROMO.welcomePct, reason: "Приветственная скидка", coupon_id: null } : null;
   const username = await getBotUsername();
   return {
-    spent,
-    rank,
-    ranks: RANKS,
-    bonus: profile.bonus_balance,
+    current,
+    welcome: { active: welcomeActive, pct: PROMO.welcomePct, until: welcomeUntil.toISOString() },
+    coupons: list,
     invited: invited.count ?? 0,
     ref_link: username ? `https://t.me/${username}?start=ref_${profile.public_id}` : null,
-    can_enter_ref: !profile.referred_by && ordersCount === 0,
-    first_order_discount: profile.referred_by && ordersCount === 0 ? REFERRAL.friendFirstOrderPct : 0,
-    referral: REFERRAL,
-    bonus_max_share: BONUS_MAX_SHARE,
+    can_enter_ref: !profile.referred_by && (liveOrders.count ?? 0) === 0,
+    referred: !!profile.referred_by,
+    ref_rewarded: !!profile.ref_rewarded,
+    rules: PROMO,
   };
 }
 
-// Расчёт суммы заказа: скидка ранга, скидка за приглашение, списание бонусов
-async function quote(uid: number, useBonus: boolean) {
+// Расчёт суммы заказа: применяется одна, самая большая скидка
+async function quote(uid: number) {
   const profile = await getProfile(uid);
   const cart = (await listCart(uid)).filter((c) => c.product.in_stock);
-  const loy = await loyalty(uid, profile);
+  const pr = await promo(uid, profile);
 
   const subtotal = cart.reduce((s, c) => s + c.product.price * c.qty, 0);
-  const rank_discount = Math.round(subtotal * loy.rank.discount / 100);
-  const ref_discount = Math.round(subtotal * loy.first_order_discount / 100);
-  const afterDiscounts = Math.max(0, subtotal - rank_discount - ref_discount);
-  const bonus_available = Math.min(profile.bonus_balance, Math.floor(afterDiscounts * BONUS_MAX_SHARE));
-  const bonus_used = useBonus ? bonus_available : 0;
-
+  const pct = pr.current?.pct ?? 0;
+  const discount_amount = Math.round(subtotal * pct / 100);
   return {
-    cart, profile, loy,
+    cart, profile, promo: pr,
     quote: {
-      subtotal, rank_discount, ref_discount, bonus_available, bonus_used,
-      total: afterDiscounts - bonus_used,
-      rank_name: loy.rank.name, rank_pct: loy.rank.discount, ref_pct: loy.first_order_discount,
+      subtotal, discount_pct: pct, discount_amount,
+      discount_reason: pr.current?.reason ?? null,
+      coupon_id: pr.current?.coupon_id ?? null,
+      total: subtotal - discount_amount,
     },
   };
 }
@@ -179,8 +186,8 @@ async function handle(action: string, body: any, user: TgUser) {
         updated_at: new Date().toISOString(),
       }, { onConflict: "telegram_id" }));
       const profile = await getProfile(uid);
-      const [cart, wish, loy] = await Promise.all([listCart(uid), listWish(uid), loyalty(uid, profile)]);
-      return { profile, cart, wish, loyalty: loy, payments: PAYMENTS };
+      const [cart, wish, pr] = await Promise.all([listCart(uid), listWish(uid), promo(uid, profile)]);
+      return { profile, cart, wish, promo: pr, payments: PAYMENTS };
     }
 
     case "saveProfile": {
@@ -205,7 +212,7 @@ async function handle(action: string, body: any, user: TgUser) {
       const res = await applyReferral(uid, str(body.code, 20));
       if (!res.ok) throw new HttpError(400, res.error!);
       const profile = await getProfile(uid);
-      return { profile, loyalty: await loyalty(uid, profile) };
+      return { profile, promo: await promo(uid, profile) };
     }
 
     case "cart":
@@ -246,7 +253,7 @@ async function handle(action: string, body: any, user: TgUser) {
       return { wish: await listWish(uid) };
 
     case "quote": {
-      const q = await quote(uid, !!body.use_bonus);
+      const q = await quote(uid);
       return { quote: q.quote };
     }
 
@@ -259,17 +266,11 @@ async function handle(action: string, body: any, user: TgUser) {
       if (!full_name || !phone || !address) throw new HttpError(400, "Заполните имя, телефон и адрес");
       if (!PAYMENTS[payment_method]) throw new HttpError(400, "Выберите способ оплаты");
 
-      const { cart, profile, quote: q } = await quote(uid, !!body.use_bonus);
+      const { cart, profile, quote: q } = await quote(uid);
       if (!profile.tg_phone) {
         throw new HttpError(403, "Подтвердите номер телефона, чтобы оформить заказ", "need_phone");
       }
       if (!cart.length) throw new HttpError(400, "Корзина пуста");
-
-      // Сначала списываем бонусы атомарно; если не хватило — заказ не создаём
-      if (q.bonus_used > 0) {
-        const { data: left, error } = await sb.rpc("add_bonus", { p_tg: uid, p_delta: -q.bonus_used });
-        if (error || left === null) throw new HttpError(409, "Баланс бонусов изменился, попробуйте ещё раз");
-      }
 
       // Цены берём из базы, а не из запроса клиента
       const items = cart.map((c) => ({
@@ -282,15 +283,25 @@ async function handle(action: string, body: any, user: TgUser) {
 
       const ins = await sb.from("orders").insert({
         telegram_id: uid, items, comment: comment || null, full_name, phone, address, payment_method,
-        subtotal: q.subtotal, rank_discount: q.rank_discount, ref_discount: q.ref_discount,
-        bonus_used: q.bonus_used, total: q.total,
+        subtotal: q.subtotal, discount_pct: q.discount_pct, discount_amount: q.discount_amount,
+        discount_reason: q.discount_reason, coupon_id: q.coupon_id, total: q.total,
       }).select().single();
       if (ins.error) {
-        if (q.bonus_used > 0) await sb.rpc("add_bonus", { p_tg: uid, p_delta: q.bonus_used });
         console.error(ins.error);
         throw new HttpError(500, "Не удалось создать заказ");
       }
       const order = ins.data as any;
+
+      // Купон одноразовый: занимаем его атомарно. Если его уже использовали — отменяем заказ.
+      if (q.coupon_id) {
+        const { data: took } = await sb.from("coupons")
+          .update({ used_order_id: order.id, used_at: new Date().toISOString() })
+          .eq("id", q.coupon_id).is("used_order_id", null).select("id");
+        if (!took?.length) {
+          await sb.from("orders").delete().eq("id", order.id);
+          throw new HttpError(409, "Купон уже использован, проверьте сумму и оформите заново");
+        }
+      }
 
       check(await sb.from("cart_items").delete().eq("telegram_id", uid));
       check(await sb.from("profiles").update({ full_name, phone, address }).eq("telegram_id", uid));
@@ -300,9 +311,7 @@ async function handle(action: string, body: any, user: TgUser) {
         const who = user.username ? `@${esc(user.username)}` : `id ${uid}`;
         const money = [
           `Товары: ${fmt(q.subtotal)}`,
-          q.rank_discount ? `Скидка ранга ${q.rank_name} (${q.rank_pct}%): −${fmt(q.rank_discount)}` : "",
-          q.ref_discount ? `Скидка за приглашение (${q.ref_pct}%): −${fmt(q.ref_discount)}` : "",
-          q.bonus_used ? `Бонусы: −${fmt(q.bonus_used)}` : "",
+          q.discount_amount ? `${esc(q.discount_reason)} (${q.discount_pct}%): −${fmt(q.discount_amount)}` : "",
         ].filter(Boolean).join("\n");
         const sent = await tg("sendMessage", {
           chat_id: ADMIN_ID,
@@ -321,7 +330,7 @@ async function handle(action: string, body: any, user: TgUser) {
         }
       }
       const fresh = await getProfile(uid);
-      return { order, orders: await listOrders(uid), profile: fresh, loyalty: await loyalty(uid, fresh) };
+      return { order, orders: await listOrders(uid), profile: fresh, promo: await promo(uid, fresh) };
     }
 
     case "orders":

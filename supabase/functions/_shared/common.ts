@@ -20,22 +20,16 @@ export const STATUS: Record<string, string> = {
   cancelled: "Отменён",
 };
 
-// ===== Настройки программы лояльности: меняйте цифры здесь =====
-
-// Ранги считаются по сумме доставленных заказов
-export const RANKS = [
-  { key: "bronze", name: "Бронза", min: 0, discount: 0 },
-  { key: "silver", name: "Серебро", min: 3_000_000, discount: 3 },
-  { key: "gold", name: "Золото", min: 10_000_000, discount: 5 },
-  { key: "platinum", name: "Платина", min: 25_000_000, discount: 7 },
-];
-
-export const REFERRAL = {
-  friendFirstOrderPct: 5, // скидка другу на первый заказ
-  referrerBonusPct: 2,    // бонусы пригласившему с каждого доставленного заказа друга
+// ===== Скидки: меняйте цифры здесь =====
+export const PROMO = {
+  welcomePct: 10,             // скидка новому пользователю на все заказы...
+  welcomeDays: 30,            // ...в течение стольких дней с первого входа
+  inviterPct: 33,             // купон пригласившему на один заказ
+  inviteeNextPct: 11,         // купон приглашённому на следующий заказ
+  minQualifyingOrder: 200_000, // заказ друга (сумма товаров) от этой суммы засчитывается
 };
-
-export const BONUS_MAX_SHARE = 0.3; // бонусами можно оплатить до 30% заказа (1 бонус = 1 сум)
+// Скидки не складываются: применяется самая большая из доступных.
+// Купон считается заработанным, когда заказ друга оплачен (статус «Оплачен» или дальше).
 
 export const PAYMENTS: Record<string, string> = {
   card: "Перевод на карту (Humo / Uzcard)",
@@ -43,12 +37,6 @@ export const PAYMENTS: Record<string, string> = {
   payme: "Payme",
   uzum: "Uzum Bank",
 };
-
-export function rankFor(spent: number) {
-  let i = 0;
-  for (let k = 0; k < RANKS.length; k++) if (spent >= RANKS[k].min) i = k;
-  return { ...RANKS[i], index: i, next: RANKS[i + 1] ?? null };
-}
 
 const enc = new TextEncoder();
 
@@ -112,8 +100,8 @@ export async function applyReferral(uid: number, rawCode: string) {
 
   await tg("sendMessage", {
     chat_id: ref.telegram_id,
-    text: `🎉 По вашему приглашению пришёл новый покупатель. ` +
-      `С каждой его доставленной покупки вы получите ${REFERRAL.referrerBonusPct}% бонусами.`,
+    text: `🎉 По вашему приглашению пришёл новый покупатель. Когда он оплатит заказ от ` +
+      `${fmt(PROMO.minQualifyingOrder)}, вы получите купон −${PROMO.inviterPct}% на следующий заказ.`,
   });
   return { ok: true };
 }

@@ -1,7 +1,7 @@
 // Вебхук Telegram-бота: /start (номер телефона, приглашения), ответы админа, статусы заказов.
 // Первый запуск: открыть в браузере .../functions/v1/bot?setup=1
 import {
-  ADMIN_ID, applyReferral, BOT_TOKEN, esc, fmt, MINIAPP_URL, normPhone, REFERRAL, safeEqual, sb,
+  ADMIN_ID, applyReferral, BOT_TOKEN, esc, fmt, MINIAPP_URL, normPhone, PROMO, safeEqual, sb,
   STATUS, tg, webhookSecret,
 } from "../_shared/common.ts";
 
@@ -39,7 +39,8 @@ async function onStart(msg: any) {
     if (res.ok) {
       await tg("sendMessage", {
         chat_id: chatId,
-        text: `🎁 Вы пришли по приглашению друга — скидка ${REFERRAL.friendFirstOrderPct}% на первый заказ.`,
+        text: `🎁 Вы пришли по приглашению друга. Оформите заказ от ${fmt(PROMO.minQualifyingOrder)} — ` +
+          `после оплаты получите купон −${PROMO.inviteeNextPct}% на следующий заказ.`,
       });
     }
   }
@@ -139,29 +140,39 @@ async function onMessage(msg: any) {
   });
 }
 
-// Начисления при смене статуса. Флаги в заказе защищают от повторного начисления.
+const PAID_OR_LATER = ["paid", "bought", "shipping", "arrived", "delivered"];
+
+// Купоны при смене статуса. Флаг ref_rewarded у приглашённого защищает от повторной выдачи.
 async function settleOrder(orderId: number, status: string) {
-  if (status === "delivered") {
-    const { data: o } = await sb.from("orders").update({ ref_bonus_paid: true })
-      .eq("id", orderId).eq("ref_bonus_paid", false).select("id,telegram_id,total").maybeSingle();
-    if (!o) return;
-    const { data: buyer } = await sb.from("profiles").select("referred_by").eq("telegram_id", o.telegram_id).single();
-    if (!buyer?.referred_by) return;
-    const bonus = Math.round(o.total * REFERRAL.referrerBonusPct / 100);
-    if (bonus <= 0) return;
-    await sb.rpc("add_bonus", { p_tg: buyer.referred_by, p_delta: bonus });
+  if (PAID_OR_LATER.includes(status)) {
+    const { data: o } = await sb.from("orders").select("id,telegram_id,subtotal").eq("id", orderId).single();
+    if (!o || (o.subtotal ?? 0) < PROMO.minQualifyingOrder) return;
+
+    // Первый оплаченный заказ приглашённого от минимальной суммы
+    const { data: buyer } = await sb.from("profiles").update({ ref_rewarded: true })
+      .eq("telegram_id", o.telegram_id).eq("ref_rewarded", false).not("referred_by", "is", null)
+      .select("telegram_id,referred_by").maybeSingle();
+    if (!buyer) return;
+
+    await sb.from("coupons").insert([
+      { telegram_id: buyer.referred_by, pct: PROMO.inviterPct, reason: "ref_inviter", source_order_id: o.id },
+      { telegram_id: buyer.telegram_id, pct: PROMO.inviteeNextPct, reason: "ref_invitee", source_order_id: o.id },
+    ]);
     await tg("sendMessage", {
       chat_id: buyer.referred_by,
-      text: `🎁 Ваш друг получил заказ — вам начислено ${fmt(bonus).replace(" сум", "")} бонусов.`,
+      text: `🎁 Ваш друг оплатил заказ — вам купон −${PROMO.inviterPct}% на следующий заказ. ` +
+        "Скидка применится автоматически при оформлении.",
       reply_markup: shopButton(),
+    });
+    await tg("sendMessage", {
+      chat_id: buyer.telegram_id,
+      text: `🎁 Спасибо за заказ! Ваш купон −${PROMO.inviteeNextPct}% на следующий заказ уже в профиле.`,
     });
   }
 
+  // Отмена заказа возвращает использованный купон
   if (status === "cancelled") {
-    const { data: o } = await sb.from("orders").update({ bonus_refunded: true })
-      .eq("id", orderId).eq("bonus_refunded", false).gt("bonus_used", 0)
-      .select("telegram_id,bonus_used").maybeSingle();
-    if (o) await sb.rpc("add_bonus", { p_tg: o.telegram_id, p_delta: o.bonus_used });
+    await sb.from("coupons").update({ used_order_id: null, used_at: null }).eq("used_order_id", orderId);
   }
 }
 

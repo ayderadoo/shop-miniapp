@@ -398,14 +398,13 @@
       <button class="pill-btn" id="copyId">Копировать</button>
     </div>
 
-    <div class="rank-card" id="rankCard">
-      <div class="lbl">Ваш ранг</div>
-      <div class="rk" id="rkName">Бронза</div>
-      <div class="disc" id="rkDisc">Скидка 0%</div>
-      <div class="bar"><i id="rkBar" style="width:0"></i></div>
-      <div class="next" id="rkNext"></div>
-      <div class="bonus"><b id="rkBonus">0</b><span>бонусов</span></div>
-    </div>
+    <button class="rank-card" id="discCard" data-open-sheet="discounts" style="display:block;width:calc(100% - 32px);text-align:left">
+      <div class="lbl">Ваша скидка сейчас</div>
+      <div class="rk" id="dcPct">—</div>
+      <div class="disc" id="dcReason"></div>
+      <div class="next" id="dcNote" style="margin-top:8px"></div>
+      <div class="bonus"><b id="dcCoupons">0</b><span id="dcCouponsLbl">купонов</span></div>
+    </button>
 
     <div class="group-title">Покупки</div>
     <div class="menu">
@@ -429,9 +428,9 @@
 
     <div class="group-title">Выгода</div>
     <div class="menu">
-      <button class="item" data-open-sheet="ranks">
-        <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="9" r="5"/><path d="M8.5 13 7 21l5-2.5L17 21l-1.5-8"/></svg>
-        <span class="t">Ранги и скидки</span><span class="v" id="mRank">Бронза</span><i class="chev"></i>
+      <button class="item" data-open-sheet="discounts">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M3 9V6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v3a3 3 0 0 0 0 6v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-3a3 3 0 0 0 0-6z"/><path d="M9.5 14.5l5-5M9.5 9.5h.01M14.5 14.5h.01"/></svg>
+        <span class="t">Мои скидки и купоны</span><span class="v" id="mDisc"></span><i class="chev"></i>
       </button>
       <button class="item" data-open-sheet="invite">
         <svg class="ic" viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-3.9 3.1-6.5 7-6.5s7 2.6 7 6.5M19 8v6M16 11h6"/></svg>
@@ -495,15 +494,6 @@
       </div>
     </div>
     <div class="section" id="coSummary"></div>
-    <div class="section" id="coBonusBox" style="display:none">
-      <div class="switch-row">
-        <div>
-          <b>Списать бонусы</b>
-          <div class="muted" id="coBonusSub"></div>
-        </div>
-        <button class="switch" id="coBonus" role="switch" aria-checked="false" aria-label="Списать бонусы"></button>
-      </div>
-    </div>
     <div class="section">
       <h3>Способ оплаты</h3>
       <div id="coPay"></div>
@@ -592,7 +582,7 @@
     const state = {
       products: [], category: "Все", query: "",
       profile: null, cart: [], wish: [], orders: null, requests: null,
-      loyalty: null, payments: {}, payment: null, useBonus: false, quote: null,
+      promo: null, payments: {}, payment: null, quote: null,
       view: store.get("ramp:view") === "list" ? "list" : "grid",
       tab: "catalog", openProductId: null, photoData: null,
     };
@@ -851,7 +841,7 @@
 
     async function refreshQuote() {
       try {
-        const { quote } = await api("quote", { use_bonus: state.useBonus });
+        const { quote } = await api("quote");
         state.quote = quote;
         renderQuote(quote);
       } catch (e) { toast(e.message); }
@@ -864,25 +854,18 @@
       if (!q) {
         const sub = items.reduce((s, c) => s + c.product.price * c.qty, 0);
         $("coSummary").innerHTML = lines + `<div class="total" style="margin:10px 0 0"><span>Итого</span><b>${fmt(sub)}</b></div>`;
-        $("coBonusBox").style.display = "none";
         return;
       }
       $("coSummary").innerHTML = lines +
-        (q.rank_discount ? `<div class="line minus"><span>Скидка ранга ${esc(q.rank_name)} (${q.rank_pct}%)</span><span>−${fmt(q.rank_discount)}</span></div>` : "") +
-        (q.ref_discount ? `<div class="line minus"><span>Скидка за приглашение (${q.ref_pct}%)</span><span>−${fmt(q.ref_discount)}</span></div>` : "") +
-        (q.bonus_used ? `<div class="line minus"><span>Бонусы</span><span>−${fmt(q.bonus_used)}</span></div>` : "") +
+        (q.discount_amount ? `<div class="line minus"><span>${esc(q.discount_reason)} (${q.discount_pct}%)</span><span>−${fmt(q.discount_amount)}</span></div>` : "") +
         `<div class="total" style="margin:10px 0 0"><span>К оплате</span><b>${fmt(q.total)}</b></div>`;
-      $("coBonusBox").style.display = q.bonus_available > 0 ? "block" : "none";
-      $("coBonusSub").textContent = `Доступно ${fmt(q.bonus_available).replace(" сум", "")} — до ${Math.round((state.loyalty?.bonus_max_share ?? .3) * 100)}% заказа`;
-      $("coBonus").classList.toggle("on", state.useBonus);
-      $("coBonus").setAttribute("aria-checked", String(state.useBonus));
     }
 
     async function submitOrder() {
       const payload = {
         full_name: $("coName").value.trim(), phone: $("coPhone").value.trim(),
         address: $("coAddress").value.trim(), comment: $("coComment").value.trim(),
-        payment_method: state.payment, use_bonus: state.useBonus,
+        payment_method: state.payment,
       };
       if (!payload.full_name || !payload.phone || !payload.address) { toast("Заполните имя, телефон и адрес"); return; }
       if (!payload.payment_method) { toast("Выберите способ оплаты"); return; }
@@ -890,11 +873,10 @@
       const btn = $("coSubmit");
       btn.disabled = true; btn.textContent = "Отправляем…";
       try {
-        const { order, orders, profile, loyalty } = await api("checkout", payload);
+        const { order, orders, profile, promo } = await api("checkout", payload);
         state.orders = orders;
         state.cart = [];
-        state.profile = profile; state.loyalty = loyalty;
-        state.useBonus = false;
+        state.profile = profile; state.promo = promo;
         $("coComment").value = "";
         tg?.HapticFeedback?.notificationOccurred("success");
         closeSheets();
@@ -945,7 +927,7 @@
       const idx = ACTIVE.indexOf(o.status);
       const cls = o.status === "delivered" ? "done" : o.status === "cancelled" ? "off" : "";
       const items = o.items.map((i) => `${esc(i.name)} × ${i.qty}`).join(", ");
-      const saved = (o.rank_discount || 0) + (o.ref_discount || 0) + (o.bonus_used || 0);
+      const saved = o.discount_amount || 0;
       const pay = state.payments[o.payment_method];
       return `
         <div class="section">
@@ -957,7 +939,7 @@
           <div class="muted" style="margin-top:6px">${date(o.created_at)} · ${o.items.reduce((s, i) => s + i.qty, 0)} шт.</div>
           <div style="margin-top:6px;font-size:14px">${items}</div>
           ${pay ? `<div class="muted" style="margin-top:6px">Оплата: ${esc(pay)}</div>` : ""}
-          ${saved ? `<div class="muted" style="margin-top:2px">Скидки и бонусы: −${fmt(saved)}</div>` : ""}
+          ${saved ? `<div class="muted" style="margin-top:2px">${esc(o.discount_reason || "Скидка")} ${o.discount_pct}%: −${fmt(saved)}</div>` : ""}
           <div class="total" style="margin:10px 0 0"><span class="muted">Сумма</span><b style="font-size:17px">${fmt(o.total)}</b></div>
         </div>`;
     }
@@ -1061,30 +1043,33 @@
     }
 
     /* ---------- Профиль ---------- */
-    const num = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+    const dateFull = (d) => new Date(d).toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+    const plural = (n, one, few, many) => {
+      const a = n % 10, b = n % 100;
+      return a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many;
+    };
 
     function renderProfile() {
       const u = tg?.initDataUnsafe?.user;
       const p = state.profile || {};
-      const L = state.loyalty;
+      const P = state.promo;
       const name = [u?.first_name, u?.last_name].filter(Boolean).join(" ") || p.full_name || "Гость";
       $("meName").textContent = name;
       $("meUser").textContent = u?.username ? "@" + u.username : (inTelegram ? "" : "Откройте магазин через Telegram");
       $("avatar").innerHTML = u?.photo_url ? `<img src="${esc(u.photo_url)}" alt="">` : esc(name[0] || "?");
       $("meId").textContent = p.public_id || "—";
 
-      if (L) {
-        const r = L.rank;
-        $("rkName").textContent = r.name;
-        $("rkDisc").textContent = r.discount ? `Скидка ${r.discount}% на все заказы` : "Скидка появится с ранга Серебро";
-        const pct = r.next ? Math.min(100, Math.max(3, (L.spent - r.min) / (r.next.min - r.min) * 100)) : 100;
-        $("rkBar").style.width = pct + "%";
-        $("rkNext").textContent = r.next
-          ? `До ранга ${r.next.name}: ${fmt(r.next.min - L.spent)}`
-          : "Максимальный ранг";
-        $("rkBonus").textContent = num(L.bonus);
-        $("mRank").textContent = r.name;
-        $("mInviteSub").textContent = `+${L.referral.referrerBonusPct}% бонусами с покупок друзей`;
+      if (P) {
+        const c = P.current;
+        $("dcPct").textContent = c ? `−${c.pct}%` : "0%";
+        $("dcReason").textContent = c ? c.reason : "Пригласите друга — получите купон";
+        $("dcNote").textContent = c && !c.coupon_id && P.welcome.active
+          ? `На все заказы до ${dateFull(P.welcome.until)}`
+          : c?.coupon_id ? "Сработает на следующем заказе" : "";
+        $("dcCoupons").textContent = P.coupons.length;
+        $("dcCouponsLbl").textContent = plural(P.coupons.length, "купон", "купона", "купонов");
+        $("mDisc").textContent = c ? `−${c.pct}%` : "";
+        $("mInviteSub").textContent = `Купон −${P.rules.inviterPct}% за каждого друга`;
       }
 
       const active = (state.orders || []).filter((o) => ACTIVE.includes(o.status)).length;
@@ -1102,7 +1087,7 @@
       state.profile = d.profile;
       if (d.cart) state.cart = d.cart;
       if (d.wish) state.wish = d.wish;
-      if (d.loyalty) state.loyalty = d.loyalty;
+      if (d.promo) state.promo = d.promo;
       if (d.payments) state.payments = d.payments;
       if (d.profile?.catalog_view && !store.get("ramp:view")) state.view = d.profile.catalog_view;
       renderProfile();
@@ -1137,31 +1122,44 @@
           `<button class="btn" data-sheet-act="saveDelivery">Сохранить</button>`);
       },
 
-      ranks() {
-        const L = state.loyalty;
-        if (!L) return toast("Откройте магазин через Telegram");
-        openInfo("Ранги и скидки", `
+      discounts() {
+        const P = state.promo;
+        if (!P) return toast("Откройте магазин через Telegram");
+        const R = P.rules;
+        const rows = [];
+        if (P.welcome.active) rows.push(`
+          <div class="rank-row ${P.current && !P.current.coupon_id ? "cur" : ""}">
+            <div class="dot">%</div>
+            <div class="grow"><b>Приветственная скидка</b><div class="muted">На все заказы до ${dateFull(P.welcome.until)}</div></div>
+            <div class="pct">−${P.welcome.pct}%</div>
+          </div>`);
+        for (const c of P.coupons) rows.push(`
+          <div class="rank-row ${P.current?.coupon_id === c.id ? "cur" : ""}">
+            <div class="dot">%</div>
+            <div class="grow"><b>${esc(c.label)}</b><div class="muted">На один заказ</div></div>
+            <div class="pct">−${c.pct}%</div>
+          </div>`);
+        openInfo("Мои скидки и купоны", `
           <div class="section">
-            <div class="muted" style="margin-bottom:6px">Ранг растёт с суммой полученных заказов. Скидка ранга действует на каждый новый заказ.</div>
-            ${L.ranks.map((r, i) => `
-              <div class="rank-row ${i === L.rank.index ? "cur" : ""}">
-                <div class="dot">${i + 1}</div>
-                <div class="grow"><b>${esc(r.name)}</b><div class="muted">${r.min ? "от " + fmt(r.min) : "с первого заказа"}</div></div>
-                <div class="pct">${r.discount}%</div>
-              </div>`).join("")}
+            ${rows.join("") || `<div class="muted">Сейчас скидок нет. Пригласите друга — получите купон −${R.inviterPct}%.</div>`}
           </div>
-          <div class="section muted">Ваши покупки: ${fmt(L.spent)}. ${L.rank.next ? `До ранга ${esc(L.rank.next.name)} осталось ${fmt(L.rank.next.min - L.spent)}.` : "У вас максимальный ранг."}</div>
-          <div class="section muted">Бонусы: ${num(L.bonus)}. 1 бонус = 1 сум, ими можно оплатить до ${Math.round(L.bonus_max_share * 100)}% заказа.</div>`);
+          <div class="section muted">
+            Скидки не складываются: при оформлении автоматически применяется самая большая.
+            Купон тратится на один заказ и возвращается, если заказ отменён.
+          </div>
+          ${P.referred && !P.ref_rewarded ? `<div class="section muted">Вы пришли по приглашению: оплатите заказ от ${fmt(R.minQualifyingOrder)} — и получите купон −${R.inviteeNextPct}% на следующий.</div>` : ""}`,
+          `<button class="btn" data-sheet-act="toInvite">Пригласить друга</button>`);
       },
 
       invite() {
-        const L = state.loyalty;
+        const L = state.promo;
         const p = state.profile || {};
         if (!L) return toast("Откройте магазин через Telegram");
+        const R = L.rules;
         openInfo("Пригласить друга", `
           <div class="invite-hero">
-            <h2>Друг получает −${L.referral.friendFirstOrderPct}%, вы — ${L.referral.referrerBonusPct}% бонусами</h2>
-            <p>Друг открывает бота по вашей ссылке или вводит ваш ID до первого заказа. Скидка — на его первый заказ, бонусы вам — с каждой его полученной покупки.</p>
+            <h2>Купон −${R.inviterPct}% за каждого друга</h2>
+            <p>Когда друг по вашей ссылке оплатит заказ от ${fmt(R.minQualifyingOrder)}, вы получите купон −${R.inviterPct}% на следующий заказ, а друг — купон −${R.inviteeNextPct}%.</p>
           </div>
           <div class="section">
             <div class="muted">Ваш ID</div>
@@ -1173,12 +1171,12 @@
           ${L.can_enter_ref ? `
           <div class="section">
             <h3>У меня есть ID друга</h3>
-            <div class="muted">Скидка ${L.referral.friendFirstOrderPct}% на ваш первый заказ</div>
+            <div class="muted">После оплаченного заказа от ${fmt(R.minQualifyingOrder)} получите купон −${R.inviteeNextPct}%</div>
             <label for="refCode">ID друга</label>
             <input id="refCode" maxlength="20" placeholder="RAMP-123456" autocapitalize="characters">
             <div style="height:12px"></div>
             <button class="btn secondary" data-sheet-act="applyRef">Применить</button>
-          </div>` : (L.first_order_discount ? `<div class="section muted">Вы пришли по приглашению: скидка ${L.first_order_discount}% применится к первому заказу.</div>` : "")}`,
+          </div>` : ""}`,
           L.ref_link ? `<div class="btn-row" style="width:100%">
               <button class="btn secondary" data-sheet-act="copyLink">Копировать</button>
               <button class="btn" data-sheet-act="share">Поделиться</button></div>` : "");
@@ -1191,7 +1189,7 @@
           </div>
           <div class="section muted">
             Оплата 100% после оформления заказа: менеджер пришлёт реквизиты выбранным способом.
-            Отмена с возвратом денег — до выкупа товара в Китае. Списанные бонусы при отмене возвращаются.
+            Отмена с возвратом денег — до выкупа товара в Китае.
           </div>`);
       },
     };
@@ -1211,10 +1209,11 @@
         finally { btn.disabled = false; }
       },
       copyId() { copyText(state.profile?.public_id || ""); },
-      copyLink() { copyText(state.loyalty?.ref_link || ""); },
+      toInvite() { sheets.invite(); },
+      copyLink() { copyText(state.promo?.ref_link || ""); },
       share() {
-        const L = state.loyalty;
-        const text = `Заказываю в RAMP — по моей ссылке скидка ${L.referral.friendFirstOrderPct}% на первый заказ`;
+        const L = state.promo;
+        const text = `Заказываю в RAMP — новым покупателям скидка ${L.rules.welcomePct}% на все заказы`;
         const url = `https://t.me/share/url?url=${encodeURIComponent(L.ref_link)}&text=${encodeURIComponent(text)}`;
         if (tg?.openTelegramLink) tg.openTelegramLink(url); else window.open(url, "_blank");
       },
@@ -1223,10 +1222,10 @@
         if (!code) return toast("Введите ID друга");
         btn.disabled = true;
         try {
-          const { profile, loyalty } = await api("applyRef", { code });
-          state.profile = profile; state.loyalty = loyalty;
+          const { profile, promo } = await api("applyRef", { code });
+          state.profile = profile; state.promo = promo;
           tg?.HapticFeedback?.notificationOccurred("success");
-          toast(`Готово: скидка ${loyalty.first_order_discount}% на первый заказ`);
+          toast("Готово: ID друга сохранён");
           sheets.invite(); renderProfile();
         } catch (e) { toast(e.message); btn.disabled = false; }
       },
@@ -1323,12 +1322,6 @@
       state.payment = b.dataset.pay;
       store.set("ramp:pay", state.payment);
       renderPayments();
-    });
-    $("coBonus").addEventListener("click", () => {
-      haptic();
-      state.useBonus = !state.useBonus;
-      $("coBonus").classList.toggle("on", state.useBonus);
-      refreshQuote();
     });
 
     $("photoInput").addEventListener("change", onPhotoPicked);
