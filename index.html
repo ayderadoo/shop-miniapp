@@ -191,12 +191,96 @@
     .drop .big { font-size: 40px; }
     .preview { width: 100%; max-height: 320px; object-fit: contain; border-radius: 12px; background: var(--bg2); display: none; }
 
+    /* Вид каталога: плитка / список */
+    .catalog-bar { display: flex; align-items: center; gap: 10px; }
+    .catalog-bar .chips { flex: 1; min-width: 0; }
+    .view-toggle { flex: none; display: flex; background: var(--bg); border: 1.5px solid var(--sep); border-radius: 12px; padding: 2px; }
+    .view-toggle button { width: 34px; height: 30px; border-radius: 9px; color: var(--hint); display: flex; align-items: center; justify-content: center; }
+    .view-toggle button.on { background: var(--bg2); color: var(--text); }
+    .view-toggle svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
+    .grid.list { grid-template-columns: 1fr; gap: 8px; }
+    .grid.list .card { display: flex; align-items: stretch; }
+    .grid.list .card .img { width: 104px; height: 104px; aspect-ratio: auto; flex: none; }
+    .grid.list .card .info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; padding-right: 50px; }
+    .grid.list .card .heart { top: 50%; transform: translateY(-50%); right: 10px; background: var(--bg2); }
+    .grid.list .badge-out { top: auto; bottom: 8px; left: 8px; font-size: 10px; }
+
     /* Профиль */
-    .me { display: flex; align-items: center; gap: 14px; }
-    .avatar { width: 58px; height: 58px; border-radius: 50%; background: var(--accent); color: var(--accent-text);
-      display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 700; overflow: hidden; flex: none; }
+    .me { display: flex; align-items: center; gap: 14px; padding: 4px 16px 0; }
+    .avatar { width: 60px; height: 60px; border-radius: 50%; background: var(--lapis); color: #fff;
+      display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 800; overflow: hidden; flex: none; }
     .avatar img { width: 100%; height: 100%; object-fit: cover; }
-    .me .title { font-size: 18px; font-weight: 700; }
+    .me .title { font-size: 20px; font-weight: 800; }
+
+    .id-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .id-card .val { font-family: var(--display); font-size: 24px; letter-spacing: .5px; margin-top: 2px; }
+    .pill-btn { border-radius: 12px; padding: 10px 14px; font-weight: 800; font-size: 14px; background: var(--bg2); color: var(--link); flex: none; }
+
+    /* Карточка ранга — та же лазурная плашка с бирюзовой диагональю, что в шапке */
+    .rank-card { position: relative; overflow: hidden; background: var(--lapis); color: #fff; border-radius: var(--radius);
+      margin: 12px 16px; padding: 16px; }
+    .rank-card::after { content: ""; position: absolute; right: -10px; top: 0; bottom: 0; width: 46%;
+      background: var(--tile); clip-path: polygon(38% 0, 100% 0, 100% 100%, 0 100%); opacity: .95; }
+    .rank-card > * { position: relative; z-index: 1; }
+    .rank-card .lbl { font-size: 13px; font-weight: 700; color: rgba(255,255,255,.75); }
+    .rank-card .rk { font-family: var(--display); font-size: 28px; margin: 2px 0 2px; }
+    .rank-card .disc { font-size: 14px; font-weight: 700; max-width: 58%; }
+    .rank-card .rk { max-width: 60%; }
+    .bar { height: 6px; border-radius: 3px; background: rgba(255,255,255,.25); margin: 12px 0 6px; max-width: 60%; }
+    .bar i { display: block; height: 100%; border-radius: 3px; background: var(--sun); }
+    .rank-card .next { font-size: 12.5px; color: rgba(255,255,255,.8); max-width: 62%; }
+    .rank-card .bonus { position: absolute; right: 16px; top: 16px; text-align: right; color: var(--ink); }
+    .rank-card .bonus b { display: block; font-size: 22px; font-weight: 800; }
+    .rank-card .bonus span { font-size: 12px; font-weight: 700; }
+
+    .group-title { font-size: 14px; font-weight: 700; color: var(--hint); margin: 20px 20px 8px; }
+    .menu { background: var(--bg); border-radius: var(--radius); margin: 0 16px; overflow: hidden; }
+    .item { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; padding: 14px 16px; position: relative; }
+    .item + .item::before { content: ""; position: absolute; top: 0; left: 54px; right: 0; height: 1px; background: var(--sep); }
+    .item svg.ic { width: 24px; height: 24px; flex: none; stroke: var(--lapis); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    :root[data-theme="dark"] .item svg.ic { stroke: var(--link); }
+    .item .t { flex: 1; min-width: 0; font-size: 16px; font-weight: 600; }
+    .item .t small { display: block; font-size: 13px; font-weight: 500; color: var(--hint); margin-top: 2px; }
+    .item .v { color: var(--hint); font-size: 14px; font-weight: 600; flex: none; }
+    .item .v.warn { color: var(--danger); }
+    .item .chev { width: 8px; height: 8px; border-right: 2px solid var(--sep); border-top: 2px solid var(--sep); transform: rotate(45deg); flex: none; margin-left: 2px; }
+
+    .seg { display: flex; background: var(--bg2); border-radius: 10px; padding: 2px; flex: none; }
+    .seg button { padding: 6px 10px; border-radius: 8px; font-size: 13px; font-weight: 700; color: var(--hint); }
+    .seg button.on { background: var(--bg); color: var(--text); }
+
+    /* Ранги */
+    .rank-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--sep); }
+    .rank-row:last-child { border-bottom: none; }
+    .rank-row .dot { width: 36px; height: 36px; border-radius: 10px; background: var(--bg2); display: flex; align-items: center; justify-content: center; font-weight: 800; color: var(--hint); flex: none; }
+    .rank-row.cur .dot { background: var(--lapis); color: #fff; }
+    .rank-row .grow b { font-size: 16px; }
+    .rank-row .pct { font-weight: 800; font-size: 18px; }
+
+    /* Приглашение */
+    .invite-hero { background: var(--lapis); color: #fff; border-radius: var(--radius); padding: 18px 16px; margin: 4px 16px 12px; }
+    .invite-hero h2 { font-size: 22px; font-weight: 800; line-height: 1.2; margin: 0 0 6px; color: #fff; }
+    .invite-hero p { font-size: 14px; color: rgba(255,255,255,.85); line-height: 1.45; }
+    .linkbox { background: var(--bg2); border-radius: 10px; padding: 11px 12px; font-size: 14px; word-break: break-all; margin: 8px 0 10px; }
+    .btn-row { display: flex; gap: 8px; }
+    .btn-row .btn { flex: 1; }
+
+    /* Оплата */
+    .pay { display: flex; align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--sep); width: 100%; text-align: left; font-size: 15px; font-weight: 600; }
+    .pay:last-child { border-bottom: none; }
+    .radio { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--sep); flex: none; display: flex; align-items: center; justify-content: center; }
+    .pay.on .radio { border-color: var(--lapis); }
+    .pay.on .radio::after { content: ""; width: 11px; height: 11px; border-radius: 50%; background: var(--lapis); }
+    .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .switch { width: 50px; height: 30px; border-radius: 15px; background: var(--sep); position: relative; flex: none; transition: background .15s; }
+    .switch::after { content: ""; position: absolute; left: 3px; top: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+    .switch.on { background: var(--tile); }
+    .switch.on::after { transform: translateX(20px); }
+    .line { display: flex; justify-content: space-between; gap: 10px; margin: 0 0 7px; font-size: 14px; }
+    .line span:last-child, .total > :last-child { white-space: nowrap; }
+    .line.minus span:last-child { color: #1f9d55; font-weight: 700; }
+    .notice { background: color-mix(in srgb, var(--sun) 22%, var(--bg)); border-radius: 12px; padding: 12px 14px; font-size: 14px; line-height: 1.4; }
+    .notice .btn { margin-top: 10px; }
 
     /* Карточка товара и оформление — полноэкранные листы */
     .sheet { position: fixed; inset: 0; background: var(--bg); z-index: 30; overflow-y: auto;
@@ -237,6 +321,10 @@
     </div>
     <div class="catalog-bar">
       <div class="chips" id="chips"></div>
+      <div class="view-toggle" id="viewToggle" role="group" aria-label="Вид каталога">
+        <button data-view="grid" aria-label="Плиткой"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></svg></button>
+        <button data-view="list" aria-label="Списком"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg></button>
+      </div>
     </div>
     <div class="grid" id="grid"></div>
     <div class="empty" id="catalogState"><div class="spinner"></div></div>
@@ -294,36 +382,92 @@
   <!-- ПРОФИЛЬ -->
   <section class="view" id="v-profile">
     <div class="top"><h1>Профиль</h1></div>
-    <div class="section">
-      <div class="me">
-        <div class="avatar" id="avatar">?</div>
-        <div>
-          <div class="title" id="meName">—</div>
-          <div class="muted" id="meUser"></div>
-        </div>
+    <div class="me">
+      <div class="avatar" id="avatar">?</div>
+      <div style="min-width:0">
+        <div class="title" id="meName">—</div>
+        <div class="muted" id="meUser"></div>
       </div>
     </div>
-    <div class="section">
-      <h3>Данные для доставки</h3>
-      <div class="muted">Подставляются при оформлении заказа</div>
-      <label for="pName">Имя и фамилия</label>
-      <input id="pName" maxlength="120" autocomplete="name">
-      <label for="pPhone">Телефон</label>
-      <input id="pPhone" type="tel" maxlength="30" placeholder="+998 __ ___ __ __" autocomplete="tel">
-      <label for="pCity">Город</label>
-      <input id="pCity" maxlength="60" placeholder="Ташкент">
-      <label for="pAddress">Адрес</label>
-      <textarea id="pAddress" maxlength="300" placeholder="Улица, дом, квартира, ориентир"></textarea>
-      <div style="height:14px"></div>
-      <button class="btn" id="pSave">Сохранить</button>
+
+    <div class="section id-card">
+      <div>
+        <div class="muted">Ваш ID</div>
+        <div class="val" id="meId">—</div>
+      </div>
+      <button class="pill-btn" id="copyId">Копировать</button>
     </div>
-    <div class="section">
-      <div class="muted">
-        Оплата — 100% при оформлении: после заказа менеджер пришлёт реквизиты.
-        Отмена с возвратом денег — до выкупа товара в Китае.
+
+    <div class="rank-card" id="rankCard">
+      <div class="lbl">Ваш ранг</div>
+      <div class="rk" id="rkName">Бронза</div>
+      <div class="disc" id="rkDisc">Скидка 0%</div>
+      <div class="bar"><i id="rkBar" style="width:0"></i></div>
+      <div class="next" id="rkNext"></div>
+      <div class="bonus"><b id="rkBonus">0</b><span>бонусов</span></div>
+    </div>
+
+    <div class="group-title">Покупки</div>
+    <div class="menu">
+      <button class="item" data-go="orders">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>
+        <span class="t">Мои заказы</span><span class="v" id="mOrders"></span><i class="chev"></i>
+      </button>
+      <button class="item" data-go="wish">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>
+        <span class="t">Желаемое</span><span class="v" id="mWish"></span><i class="chev"></i>
+      </button>
+      <button class="item" data-open-sheet="delivery">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
+        <span class="t">Данные доставки<small id="mDelivery">не указаны</small></span><i class="chev"></i>
+      </button>
+      <button class="item" id="phoneItem">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M6.5 3h3l1.5 4.5-2 1.5a12 12 0 0 0 6 6l1.5-2 4.5 1.5v3a2 2 0 0 1-2 2A17 17 0 0 1 4.5 5a2 2 0 0 1 2-2z"/></svg>
+        <span class="t">Телефон<small id="mPhone">не подтверждён</small></span><span class="v warn" id="mPhoneAct">Подтвердить</span>
+      </button>
+    </div>
+
+    <div class="group-title">Выгода</div>
+    <div class="menu">
+      <button class="item" data-open-sheet="ranks">
+        <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="9" r="5"/><path d="M8.5 13 7 21l5-2.5L17 21l-1.5-8"/></svg>
+        <span class="t">Ранги и скидки</span><span class="v" id="mRank">Бронза</span><i class="chev"></i>
+      </button>
+      <button class="item" data-open-sheet="invite">
+        <svg class="ic" viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-3.9 3.1-6.5 7-6.5s7 2.6 7 6.5M19 8v6M16 11h6"/></svg>
+        <span class="t">Пригласить друга<small id="mInviteSub">Бонусы с покупок друзей</small></span><i class="chev"></i>
+      </button>
+      <button class="item" data-go="photo">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M3 8a2 2 0 0 1 2-2h2l2-2h6l2 2h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg>
+        <span class="t">Найти товар по фото<small>Пришлите фото — подберём и посчитаем цену</small></span><i class="chev"></i>
+      </button>
+    </div>
+
+    <div class="group-title">Настройки</div>
+    <div class="menu">
+      <div class="item">
+        <svg class="ic" viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><path d="M4 15h16M4 19.5h16"/></svg>
+        <span class="t">Вид каталога</span>
+        <div class="seg" id="viewSeg"><button data-view="grid">Плитка</button><button data-view="list">Список</button></div>
       </div>
     </div>
+
+    <div class="group-title">Информация</div>
+    <div class="menu">
+      <button class="item" data-open-sheet="payments">
+        <svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5.5" width="18" height="13" rx="2.5"/><path d="M3 10h18M7 15h4"/></svg>
+        <span class="t">Способы оплаты</span><i class="chev"></i>
+      </button>
+    </div>
+    <div style="height:8px"></div>
   </section>
+
+  <!-- Универсальный лист: ранги, приглашение, оплата, доставка -->
+  <div class="sheet" id="infoSheet">
+    <div class="top"><h1 id="infoTitle"></h1></div>
+    <div id="infoBody"></div>
+  </div>
+  <div class="sheet-bar" id="infoBar"></div>
 
   <!-- Карточка товара -->
   <div class="sheet" id="productSheet">
@@ -344,7 +488,26 @@
   <!-- Оформление заказа -->
   <div class="sheet" id="checkoutSheet">
     <div class="top"><h1>Оформление</h1></div>
+    <div class="section" id="coPhoneNotice" style="display:none;padding:0;background:none">
+      <div class="notice">
+        Подтвердите номер телефона — так мы сможем связаться с вами по заказу.
+        <button class="btn" id="coConfirmPhone">Подтвердить номер</button>
+      </div>
+    </div>
     <div class="section" id="coSummary"></div>
+    <div class="section" id="coBonusBox" style="display:none">
+      <div class="switch-row">
+        <div>
+          <b>Списать бонусы</b>
+          <div class="muted" id="coBonusSub"></div>
+        </div>
+        <button class="switch" id="coBonus" role="switch" aria-checked="false" aria-label="Списать бонусы"></button>
+      </div>
+    </div>
+    <div class="section">
+      <h3>Способ оплаты</h3>
+      <div id="coPay"></div>
+    </div>
     <div class="section">
       <label for="coName">Имя и фамилия *</label>
       <input id="coName" maxlength="120" autocomplete="name">
@@ -356,7 +519,7 @@
       <textarea id="coComment" maxlength="500" placeholder="Необязательно"></textarea>
     </div>
     <div class="section muted">
-      Оплата 100% при оформлении. После подтверждения менеджер пришлёт реквизиты для оплаты.
+      Оплата 100% после оформления: менеджер пришлёт реквизиты выбранным способом.
       Статус заказа будет виден во вкладке «Заказы».
     </div>
   </div>
@@ -421,9 +584,16 @@
     tg?.onEvent?.("themeChanged", applyTheme);
     const inTelegram = !!tg?.initData;
 
+    const store = {
+      get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+      set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+    };
+
     const state = {
       products: [], category: "Все", query: "",
       profile: null, cart: [], wish: [], orders: null, requests: null,
+      loyalty: null, payments: {}, payment: null, useBonus: false, quote: null,
+      view: store.get("ramp:view") === "list" ? "list" : "grid",
       tab: "catalog", openProductId: null, photoData: null,
     };
 
@@ -460,8 +630,24 @@
         body: JSON.stringify({ action, ...payload }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Ошибка соединения");
+      if (!res.ok) {
+        const err = new Error(data.error || "Ошибка соединения");
+        err.code = data.code;
+        throw err;
+      }
       return data;
+    }
+
+    async function copyText(text) {
+      try { await navigator.clipboard.writeText(text); }
+      catch {
+        const t = document.createElement("textarea");
+        t.value = text; document.body.appendChild(t); t.select();
+        try { document.execCommand("copy"); } catch {}
+        t.remove();
+      }
+      tg?.HapticFeedback?.notificationOccurred("success");
+      toast("Скопировано");
     }
 
     /* ---------- Каталог ---------- */
@@ -507,9 +693,26 @@
         (state.category === "Все" || p.category === state.category) &&
         (!q || p.name.toLowerCase().includes(q)));
       $("grid").innerHTML = list.map(cardHtml).join("");
+      applyView();
       const st = $("catalogState");
       st.style.display = list.length ? "none" : "block";
       st.textContent = list.length ? "" : "Ничего не найдено. Попробуйте поиск по фото 📷";
+    }
+
+    // Плитка или список: кнопки в каталоге и переключатель в профиле
+    function applyView() {
+      for (const id of ["grid", "wishGrid"]) $(id).classList.toggle("list", state.view === "list");
+      document.querySelectorAll("#viewToggle button, #viewSeg button").forEach((b) =>
+        b.classList.toggle("on", b.dataset.view === state.view));
+    }
+
+    function setView(view) {
+      if (view === state.view) return;
+      state.view = view;
+      store.set("ramp:view", view);
+      haptic();
+      applyView();
+      if (inTelegram) api("setPrefs", { catalog_view: view }).catch(() => {});
     }
 
     /* ---------- Карточка товара ---------- */
@@ -558,6 +761,8 @@
       $("productBar").classList.remove("show");
       $("checkoutSheet").classList.remove("open");
       $("checkoutBar").classList.remove("show");
+      $("infoSheet").classList.remove("open");
+      $("infoBar").classList.remove("show");
       state.openProductId = null;
       tg?.BackButton.hide();
     }
@@ -585,6 +790,7 @@
 
     function renderWish() {
       $("wishGrid").innerHTML = state.wish.map(cardHtml).join("");
+      applyView();
       $("wishEmpty").style.display = state.wish.length ? "none" : "block";
     }
 
@@ -623,33 +829,72 @@
     function openCheckout() {
       const items = state.cart.filter((c) => c.product.in_stock);
       if (!items.length) return;
-      const total = items.reduce((s, c) => s + c.product.price * c.qty, 0);
-      $("coSummary").innerHTML = items.map((c) =>
-        `<div class="total" style="margin:0 0 6px"><span>${esc(c.product.name)} × ${c.qty}</span><span>${fmt(c.product.price * c.qty)}</span></div>`).join("") +
-        `<div class="total" style="margin:10px 0 0"><span>Итого</span><b>${fmt(total)}</b></div>`;
       const p = state.profile || {};
       $("coName").value = p.full_name || [p.first_name, p.last_name].filter(Boolean).join(" ");
-      $("coPhone").value = p.phone || "";
+      $("coPhone").value = p.phone || p.tg_phone || "";
       $("coAddress").value = [p.city, p.address].filter(Boolean).join(", ");
+      $("coPhoneNotice").style.display = p.tg_phone ? "none" : "block";
+      if (!state.payment) state.payment = store.get("ramp:pay") || Object.keys(state.payments)[0] || null;
+      renderPayments();
+      renderQuote(null);
+      refreshQuote();
       $("checkoutSheet").scrollTop = 0;
       $("checkoutSheet").classList.add("open");
       $("checkoutBar").classList.add("show");
       tg?.BackButton.show();
     }
 
+    function renderPayments() {
+      $("coPay").innerHTML = Object.entries(state.payments).map(([k, label]) => `
+        <button class="pay ${k === state.payment ? "on" : ""}" data-pay="${esc(k)}"><span class="radio"></span>${esc(label)}</button>`).join("");
+    }
+
+    async function refreshQuote() {
+      try {
+        const { quote } = await api("quote", { use_bonus: state.useBonus });
+        state.quote = quote;
+        renderQuote(quote);
+      } catch (e) { toast(e.message); }
+    }
+
+    function renderQuote(q) {
+      const items = state.cart.filter((c) => c.product.in_stock);
+      const lines = items.map((c) =>
+        `<div class="line"><span>${esc(c.product.name)} × ${c.qty}</span><span>${fmt(c.product.price * c.qty)}</span></div>`).join("");
+      if (!q) {
+        const sub = items.reduce((s, c) => s + c.product.price * c.qty, 0);
+        $("coSummary").innerHTML = lines + `<div class="total" style="margin:10px 0 0"><span>Итого</span><b>${fmt(sub)}</b></div>`;
+        $("coBonusBox").style.display = "none";
+        return;
+      }
+      $("coSummary").innerHTML = lines +
+        (q.rank_discount ? `<div class="line minus"><span>Скидка ранга ${esc(q.rank_name)} (${q.rank_pct}%)</span><span>−${fmt(q.rank_discount)}</span></div>` : "") +
+        (q.ref_discount ? `<div class="line minus"><span>Скидка за приглашение (${q.ref_pct}%)</span><span>−${fmt(q.ref_discount)}</span></div>` : "") +
+        (q.bonus_used ? `<div class="line minus"><span>Бонусы</span><span>−${fmt(q.bonus_used)}</span></div>` : "") +
+        `<div class="total" style="margin:10px 0 0"><span>К оплате</span><b>${fmt(q.total)}</b></div>`;
+      $("coBonusBox").style.display = q.bonus_available > 0 ? "block" : "none";
+      $("coBonusSub").textContent = `Доступно ${fmt(q.bonus_available).replace(" сум", "")} — до ${Math.round((state.loyalty?.bonus_max_share ?? .3) * 100)}% заказа`;
+      $("coBonus").classList.toggle("on", state.useBonus);
+      $("coBonus").setAttribute("aria-checked", String(state.useBonus));
+    }
+
     async function submitOrder() {
       const payload = {
         full_name: $("coName").value.trim(), phone: $("coPhone").value.trim(),
         address: $("coAddress").value.trim(), comment: $("coComment").value.trim(),
+        payment_method: state.payment, use_bonus: state.useBonus,
       };
       if (!payload.full_name || !payload.phone || !payload.address) { toast("Заполните имя, телефон и адрес"); return; }
+      if (!payload.payment_method) { toast("Выберите способ оплаты"); return; }
+      if (!state.profile?.tg_phone) { requestPhone(); return; }
       const btn = $("coSubmit");
       btn.disabled = true; btn.textContent = "Отправляем…";
       try {
-        const { order, orders } = await api("checkout", payload);
+        const { order, orders, profile, loyalty } = await api("checkout", payload);
         state.orders = orders;
         state.cart = [];
-        state.profile = { ...state.profile, full_name: payload.full_name, phone: payload.phone, address: payload.address };
+        state.profile = profile; state.loyalty = loyalty;
+        state.useBonus = false;
         $("coComment").value = "";
         tg?.HapticFeedback?.notificationOccurred("success");
         closeSheets();
@@ -657,10 +902,33 @@
         showTab("orders");
         toast(`Заказ №${order.id} оформлен! Менеджер пришлёт реквизиты для оплаты`);
       } catch (e) {
-        toast(e.message);
+        if (e.code === "need_phone") requestPhone();
+        else { toast(e.message); refreshQuote(); }
       } finally {
         btn.disabled = false; btn.textContent = "Подтвердить заказ";
       }
+    }
+
+    // Номер телефона: Telegram сам показывает окно «Поделиться номером», контакт уходит боту
+    function requestPhone() {
+      if (!tg?.requestContact) { toast("Отправьте /start боту и нажмите «Поделиться номером»"); return; }
+      tg.requestContact(async (ok) => {
+        if (!ok) { toast("Без номера оформить заказ не получится"); return; }
+        for (let i = 0; i < 6; i++) {
+          await new Promise((r) => setTimeout(r, 900));
+          try {
+            const d = await api("me");
+            if (d.profile.tg_phone) {
+              applyMe(d);
+              $("coPhoneNotice").style.display = "none";
+              if (!$("coPhone").value) $("coPhone").value = d.profile.tg_phone;
+              toast("Номер подтверждён");
+              return;
+            }
+          } catch {}
+        }
+        toast("Номер отправлен боту — обновите страницу через минуту");
+      });
     }
 
     /* ---------- Заказы ---------- */
@@ -677,6 +945,8 @@
       const idx = ACTIVE.indexOf(o.status);
       const cls = o.status === "delivered" ? "done" : o.status === "cancelled" ? "off" : "";
       const items = o.items.map((i) => `${esc(i.name)} × ${i.qty}`).join(", ");
+      const saved = (o.rank_discount || 0) + (o.ref_discount || 0) + (o.bonus_used || 0);
+      const pay = state.payments[o.payment_method];
       return `
         <div class="section">
           <div class="order-head">
@@ -686,6 +956,8 @@
           ${idx >= 0 ? `<div class="steps">${ACTIVE.map((_, i) => `<i class="${i <= idx ? "on" : ""}"></i>`).join("")}</div>` : ""}
           <div class="muted" style="margin-top:6px">${date(o.created_at)} · ${o.items.reduce((s, i) => s + i.qty, 0)} шт.</div>
           <div style="margin-top:6px;font-size:14px">${items}</div>
+          ${pay ? `<div class="muted" style="margin-top:6px">Оплата: ${esc(pay)}</div>` : ""}
+          ${saved ? `<div class="muted" style="margin-top:2px">Скидки и бонусы: −${fmt(saved)}</div>` : ""}
           <div class="total" style="margin:10px 0 0"><span class="muted">Сумма</span><b style="font-size:17px">${fmt(o.total)}</b></div>
         </div>`;
     }
@@ -789,33 +1061,176 @@
     }
 
     /* ---------- Профиль ---------- */
+    const num = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+
     function renderProfile() {
       const u = tg?.initDataUnsafe?.user;
       const p = state.profile || {};
-      const name = p.full_name || [u?.first_name, u?.last_name].filter(Boolean).join(" ") || "Гость";
+      const L = state.loyalty;
+      const name = [u?.first_name, u?.last_name].filter(Boolean).join(" ") || p.full_name || "Гость";
       $("meName").textContent = name;
       $("meUser").textContent = u?.username ? "@" + u.username : (inTelegram ? "" : "Откройте магазин через Telegram");
       $("avatar").innerHTML = u?.photo_url ? `<img src="${esc(u.photo_url)}" alt="">` : esc(name[0] || "?");
-      $("pName").value = p.full_name || "";
-      $("pPhone").value = p.phone || "";
-      $("pCity").value = p.city || "";
-      $("pAddress").value = p.address || "";
+      $("meId").textContent = p.public_id || "—";
+
+      if (L) {
+        const r = L.rank;
+        $("rkName").textContent = r.name;
+        $("rkDisc").textContent = r.discount ? `Скидка ${r.discount}% на все заказы` : "Скидка появится с ранга Серебро";
+        const pct = r.next ? Math.min(100, Math.max(3, (L.spent - r.min) / (r.next.min - r.min) * 100)) : 100;
+        $("rkBar").style.width = pct + "%";
+        $("rkNext").textContent = r.next
+          ? `До ранга ${r.next.name}: ${fmt(r.next.min - L.spent)}`
+          : "Максимальный ранг";
+        $("rkBonus").textContent = num(L.bonus);
+        $("mRank").textContent = r.name;
+        $("mInviteSub").textContent = `+${L.referral.referrerBonusPct}% бонусами с покупок друзей`;
+      }
+
+      const active = (state.orders || []).filter((o) => ACTIVE.includes(o.status)).length;
+      $("mOrders").textContent = active ? `${active} активн.` : "";
+      $("mWish").textContent = state.wish.length || "";
+      const deliv = [p.city, p.address].filter(Boolean).join(", ");
+      $("mDelivery").textContent = deliv || "не указаны";
+      $("mPhone").textContent = p.tg_phone || "не подтверждён";
+      $("mPhoneAct").style.display = p.tg_phone ? "none" : "";
+      $("phoneItem").disabled = !!p.tg_phone;
+      applyView();
     }
 
-    async function saveProfile() {
-      const btn = $("pSave");
-      btn.disabled = true;
-      try {
-        const { profile } = await api("saveProfile", {
-          full_name: $("pName").value, phone: $("pPhone").value, city: $("pCity").value, address: $("pAddress").value,
-        });
-        state.profile = profile;
-        tg?.HapticFeedback?.notificationOccurred("success");
-        toast("Сохранено");
-        renderProfile();
-      } catch (e) { toast(e.message); }
-      finally { btn.disabled = false; }
+    function applyMe(d) {
+      state.profile = d.profile;
+      if (d.cart) state.cart = d.cart;
+      if (d.wish) state.wish = d.wish;
+      if (d.loyalty) state.loyalty = d.loyalty;
+      if (d.payments) state.payments = d.payments;
+      if (d.profile?.catalog_view && !store.get("ramp:view")) state.view = d.profile.catalog_view;
+      renderProfile();
     }
+
+    /* ---------- Листы профиля ---------- */
+    function openInfo(title, html, barHtml = "") {
+      $("infoTitle").textContent = title;
+      $("infoBody").innerHTML = html;
+      $("infoBar").innerHTML = barHtml;
+      $("infoBar").classList.toggle("show", !!barHtml);
+      $("infoSheet").scrollTop = 0;
+      $("infoSheet").classList.add("open");
+      tg?.BackButton.show();
+    }
+
+    const sheets = {
+      delivery() {
+        const p = state.profile || {};
+        openInfo("Данные доставки", `
+          <div class="section">
+            <div class="muted">Подставляются при оформлении заказа</div>
+            <label for="pName">Имя и фамилия</label>
+            <input id="pName" maxlength="120" autocomplete="name" value="${esc(p.full_name || "")}">
+            <label for="pPhone">Телефон для связи</label>
+            <input id="pPhone" type="tel" maxlength="30" placeholder="+998 __ ___ __ __" autocomplete="tel" value="${esc(p.phone || p.tg_phone || "")}">
+            <label for="pCity">Город</label>
+            <input id="pCity" maxlength="60" placeholder="Ташкент" value="${esc(p.city || "")}">
+            <label for="pAddress">Адрес</label>
+            <textarea id="pAddress" maxlength="300" placeholder="Улица, дом, квартира, ориентир">${esc(p.address || "")}</textarea>
+          </div>`,
+          `<button class="btn" data-sheet-act="saveDelivery">Сохранить</button>`);
+      },
+
+      ranks() {
+        const L = state.loyalty;
+        if (!L) return toast("Откройте магазин через Telegram");
+        openInfo("Ранги и скидки", `
+          <div class="section">
+            <div class="muted" style="margin-bottom:6px">Ранг растёт с суммой полученных заказов. Скидка ранга действует на каждый новый заказ.</div>
+            ${L.ranks.map((r, i) => `
+              <div class="rank-row ${i === L.rank.index ? "cur" : ""}">
+                <div class="dot">${i + 1}</div>
+                <div class="grow"><b>${esc(r.name)}</b><div class="muted">${r.min ? "от " + fmt(r.min) : "с первого заказа"}</div></div>
+                <div class="pct">${r.discount}%</div>
+              </div>`).join("")}
+          </div>
+          <div class="section muted">Ваши покупки: ${fmt(L.spent)}. ${L.rank.next ? `До ранга ${esc(L.rank.next.name)} осталось ${fmt(L.rank.next.min - L.spent)}.` : "У вас максимальный ранг."}</div>
+          <div class="section muted">Бонусы: ${num(L.bonus)}. 1 бонус = 1 сум, ими можно оплатить до ${Math.round(L.bonus_max_share * 100)}% заказа.</div>`);
+      },
+
+      invite() {
+        const L = state.loyalty;
+        const p = state.profile || {};
+        if (!L) return toast("Откройте магазин через Telegram");
+        openInfo("Пригласить друга", `
+          <div class="invite-hero">
+            <h2>Друг получает −${L.referral.friendFirstOrderPct}%, вы — ${L.referral.referrerBonusPct}% бонусами</h2>
+            <p>Друг открывает бота по вашей ссылке или вводит ваш ID до первого заказа. Скидка — на его первый заказ, бонусы вам — с каждой его полученной покупки.</p>
+          </div>
+          <div class="section">
+            <div class="muted">Ваш ID</div>
+            <div class="id-card" style="margin-top:4px"><div class="val" style="font-family:var(--display);font-size:22px">${esc(p.public_id || "—")}</div>
+              <button class="pill-btn" data-sheet-act="copyId">Копировать</button></div>
+            ${L.ref_link ? `<div class="muted" style="margin-top:14px">Ссылка-приглашение</div><div class="linkbox">${esc(L.ref_link)}</div>` : ""}
+            <div class="muted">Приглашено друзей: ${L.invited}</div>
+          </div>
+          ${L.can_enter_ref ? `
+          <div class="section">
+            <h3>У меня есть ID друга</h3>
+            <div class="muted">Скидка ${L.referral.friendFirstOrderPct}% на ваш первый заказ</div>
+            <label for="refCode">ID друга</label>
+            <input id="refCode" maxlength="20" placeholder="RAMP-123456" autocapitalize="characters">
+            <div style="height:12px"></div>
+            <button class="btn secondary" data-sheet-act="applyRef">Применить</button>
+          </div>` : (L.first_order_discount ? `<div class="section muted">Вы пришли по приглашению: скидка ${L.first_order_discount}% применится к первому заказу.</div>` : "")}`,
+          L.ref_link ? `<div class="btn-row" style="width:100%">
+              <button class="btn secondary" data-sheet-act="copyLink">Копировать</button>
+              <button class="btn" data-sheet-act="share">Поделиться</button></div>` : "");
+      },
+
+      payments() {
+        openInfo("Способы оплаты", `
+          <div class="section">
+            ${Object.values(state.payments).map((l) => `<div class="pay" style="cursor:default"><span class="radio"></span>${esc(l)}</div>`).join("") || `<div class="muted">Откройте магазин через Telegram</div>`}
+          </div>
+          <div class="section muted">
+            Оплата 100% после оформления заказа: менеджер пришлёт реквизиты выбранным способом.
+            Отмена с возвратом денег — до выкупа товара в Китае. Списанные бонусы при отмене возвращаются.
+          </div>`);
+      },
+    };
+
+    const sheetActs = {
+      async saveDelivery(btn) {
+        btn.disabled = true;
+        try {
+          const { profile } = await api("saveProfile", {
+            full_name: $("pName").value, phone: $("pPhone").value, city: $("pCity").value, address: $("pAddress").value,
+          });
+          state.profile = profile;
+          tg?.HapticFeedback?.notificationOccurred("success");
+          toast("Сохранено");
+          closeSheets(); renderProfile();
+        } catch (e) { toast(e.message); }
+        finally { btn.disabled = false; }
+      },
+      copyId() { copyText(state.profile?.public_id || ""); },
+      copyLink() { copyText(state.loyalty?.ref_link || ""); },
+      share() {
+        const L = state.loyalty;
+        const text = `Заказываю в RAMP — по моей ссылке скидка ${L.referral.friendFirstOrderPct}% на первый заказ`;
+        const url = `https://t.me/share/url?url=${encodeURIComponent(L.ref_link)}&text=${encodeURIComponent(text)}`;
+        if (tg?.openTelegramLink) tg.openTelegramLink(url); else window.open(url, "_blank");
+      },
+      async applyRef(btn) {
+        const code = $("refCode").value.trim();
+        if (!code) return toast("Введите ID друга");
+        btn.disabled = true;
+        try {
+          const { profile, loyalty } = await api("applyRef", { code });
+          state.profile = profile; state.loyalty = loyalty;
+          tg?.HapticFeedback?.notificationOccurred("success");
+          toast(`Готово: скидка ${loyalty.first_order_discount}% на первый заказ`);
+          sheets.invite(); renderProfile();
+        } catch (e) { toast(e.message); btn.disabled = false; }
+      },
+    };
 
     /* ---------- Общее ---------- */
     const notInTg = () => `<div class="empty"><div class="big">🔒</div>Откройте магазин через бота в Telegram</div>`;
@@ -846,8 +1261,7 @@
       loadProducts();
       if (!inTelegram) { renderCart(); renderWish(); return; }
       try {
-        const { profile, cart, wish } = await api("me");
-        state.profile = profile; state.cart = cart; state.wish = wish;
+        applyMe(await api("me"));
         renderCatalog(); renderWish(); updateBadges();
         loadOrders();
       } catch (e) { toast(e.message); }
@@ -901,10 +1315,48 @@
     });
 
     $("coSubmit").addEventListener("click", submitOrder);
+    $("coConfirmPhone").addEventListener("click", requestPhone);
+    $("coPay").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-pay]");
+      if (!b) return;
+      haptic();
+      state.payment = b.dataset.pay;
+      store.set("ramp:pay", state.payment);
+      renderPayments();
+    });
+    $("coBonus").addEventListener("click", () => {
+      haptic();
+      state.useBonus = !state.useBonus;
+      $("coBonus").classList.toggle("on", state.useBonus);
+      refreshQuote();
+    });
+
     $("photoInput").addEventListener("change", onPhotoPicked);
     $("preview").addEventListener("click", () => $("photoInput").click());
     $("photoSend").addEventListener("click", sendPhoto);
-    $("pSave").addEventListener("click", saveProfile);
+
+    for (const id of ["viewToggle", "viewSeg"]) {
+      $(id).addEventListener("click", (e) => {
+        const b = e.target.closest("[data-view]");
+        if (b) setView(b.dataset.view);
+      });
+    }
+
+    // Меню профиля
+    $("v-profile").addEventListener("click", (e) => {
+      const go = e.target.closest("[data-go]");
+      if (go) { haptic(); return showTab(go.dataset.go); }
+      const sh = e.target.closest("[data-open-sheet]");
+      if (sh) { haptic(); return sheets[sh.dataset.openSheet](); }
+      if (e.target.closest("#copyId")) return copyText(state.profile?.public_id || "");
+      if (e.target.closest("#phoneItem") && !state.profile?.tg_phone) return requestPhone();
+    });
+    for (const id of ["infoBody", "infoBar"]) {
+      $(id).addEventListener("click", (e) => {
+        const b = e.target.closest("[data-sheet-act]");
+        if (b) sheetActs[b.dataset.sheetAct](b);
+      });
+    }
     tg?.BackButton.onClick(closeSheets);
 
     init();

@@ -1,6 +1,7 @@
 // API мини-эппа: каждый запрос подписан Telegram (initData), иначе отказ.
 import {
-  ADMIN_ID, BOT_TOKEN, esc, fmt, hex, hmac, safeEqual, sb, STATUS, tg,
+  ADMIN_ID, applyReferral, BONUS_MAX_SHARE, BOT_TOKEN, esc, fmt, getBotUsername, hex, hmac,
+  PAYMENTS, RANKS, rankFor, REFERRAL, safeEqual, sb, STATUS, tg,
 } from "../_shared/common.ts";
 
 const cors = {
@@ -16,7 +17,7 @@ const json = (data: unknown, status = 200) =>
   });
 
 class HttpError extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  constructor(public status: number, message: string, public code?: string) { super(message); }
 }
 
 type TgUser = { id: number; first_name?: string; last_name?: string; username?: string };
@@ -59,6 +60,13 @@ function check<T>(res: { data: T; error: unknown }): T {
 }
 
 const PRODUCT_COLS = "id,name,category,price,photo,description,active,in_stock";
+const PROFILE_COLS =
+  "telegram_id,public_id,first_name,last_name,username,full_name,phone,tg_phone,city,address," +
+  "referred_by,bonus_balance,catalog_view,created_at";
+
+async function getProfile(uid: number) {
+  return check(await sb.from("profiles").select(PROFILE_COLS).eq("telegram_id", uid).single()) as any;
+}
 
 async function listCart(uid: number) {
   const rows = check(await sb.from("cart_items")
@@ -79,7 +87,8 @@ async function listWish(uid: number) {
 
 async function listOrders(uid: number) {
   return check(await sb.from("orders")
-    .select("id,items,total,status,full_name,phone,address,comment,created_at")
+    .select("id,items,subtotal,rank_discount,ref_discount,bonus_used,total,status,payment_method," +
+      "full_name,phone,address,comment,created_at")
     .eq("telegram_id", uid)
     .order("created_at", { ascending: false })
     .limit(50));
@@ -95,6 +104,55 @@ async function listPhotoRequests(uid: number) {
   const { data: urls } = await sb.storage.from("requests")
     .createSignedUrls(rows.map((r) => r.photo_path), 3600);
   return rows.map((r, i) => ({ ...r, photo_url: urls?.[i]?.signedUrl ?? null }));
+}
+
+// Ранг, бонусы, приглашения — всё, что нужно меню профиля
+async function loyalty(uid: number, profile: any) {
+  const [delivered, liveOrders, invited] = await Promise.all([
+    sb.from("orders").select("total").eq("telegram_id", uid).eq("status", "delivered"),
+    sb.from("orders").select("id", { count: "exact", head: true })
+      .eq("telegram_id", uid).neq("status", "cancelled"),
+    sb.from("profiles").select("telegram_id", { count: "exact", head: true }).eq("referred_by", uid),
+  ]);
+  const spent = (delivered.data ?? []).reduce((s: number, o: any) => s + o.total, 0);
+  const rank = rankFor(spent);
+  const ordersCount = liveOrders.count ?? 0;
+  const username = await getBotUsername();
+  return {
+    spent,
+    rank,
+    ranks: RANKS,
+    bonus: profile.bonus_balance,
+    invited: invited.count ?? 0,
+    ref_link: username ? `https://t.me/${username}?start=ref_${profile.public_id}` : null,
+    can_enter_ref: !profile.referred_by && ordersCount === 0,
+    first_order_discount: profile.referred_by && ordersCount === 0 ? REFERRAL.friendFirstOrderPct : 0,
+    referral: REFERRAL,
+    bonus_max_share: BONUS_MAX_SHARE,
+  };
+}
+
+// Расчёт суммы заказа: скидка ранга, скидка за приглашение, списание бонусов
+async function quote(uid: number, useBonus: boolean) {
+  const profile = await getProfile(uid);
+  const cart = (await listCart(uid)).filter((c) => c.product.in_stock);
+  const loy = await loyalty(uid, profile);
+
+  const subtotal = cart.reduce((s, c) => s + c.product.price * c.qty, 0);
+  const rank_discount = Math.round(subtotal * loy.rank.discount / 100);
+  const ref_discount = Math.round(subtotal * loy.first_order_discount / 100);
+  const afterDiscounts = Math.max(0, subtotal - rank_discount - ref_discount);
+  const bonus_available = Math.min(profile.bonus_balance, Math.floor(afterDiscounts * BONUS_MAX_SHARE));
+  const bonus_used = useBonus ? bonus_available : 0;
+
+  return {
+    cart, profile, loy,
+    quote: {
+      subtotal, rank_discount, ref_discount, bonus_available, bonus_used,
+      total: afterDiscounts - bonus_used,
+      rank_name: loy.rank.name, rank_pct: loy.rank.discount, ref_pct: loy.first_order_discount,
+    },
+  };
 }
 
 function statusKeyboard(orderId: number) {
@@ -120,9 +178,9 @@ async function handle(action: string, body: any, user: TgUser) {
         username: user.username ?? null,
         updated_at: new Date().toISOString(),
       }, { onConflict: "telegram_id" }));
-      const profile = check(await sb.from("profiles").select("*").eq("telegram_id", uid).single());
-      const [cart, wish] = await Promise.all([listCart(uid), listWish(uid)]);
-      return { profile, cart, wish };
+      const profile = await getProfile(uid);
+      const [cart, wish, loy] = await Promise.all([listCart(uid), listWish(uid), loyalty(uid, profile)]);
+      return { profile, cart, wish, loyalty: loy, payments: PAYMENTS };
     }
 
     case "saveProfile": {
@@ -133,9 +191,21 @@ async function handle(action: string, body: any, user: TgUser) {
         address: str(body.address, 300),
         updated_at: new Date().toISOString(),
       };
-      return {
-        profile: check(await sb.from("profiles").update(patch).eq("telegram_id", uid).select().single()),
-      };
+      check(await sb.from("profiles").update(patch).eq("telegram_id", uid));
+      return { profile: await getProfile(uid) };
+    }
+
+    case "setPrefs": {
+      const view = body.catalog_view === "list" ? "list" : "grid";
+      check(await sb.from("profiles").update({ catalog_view: view }).eq("telegram_id", uid));
+      return { ok: true };
+    }
+
+    case "applyRef": {
+      const res = await applyReferral(uid, str(body.code, 20));
+      if (!res.ok) throw new HttpError(400, res.error!);
+      const profile = await getProfile(uid);
+      return { profile, loyalty: await loyalty(uid, profile) };
     }
 
     case "cart":
@@ -175,15 +245,31 @@ async function handle(action: string, body: any, user: TgUser) {
     case "wishlist":
       return { wish: await listWish(uid) };
 
+    case "quote": {
+      const q = await quote(uid, !!body.use_bonus);
+      return { quote: q.quote };
+    }
+
     case "checkout": {
       const full_name = str(body.full_name, 120);
       const phone = str(body.phone, 30);
       const address = str(body.address, 300);
       const comment = str(body.comment, 500);
+      const payment_method = String(body.payment_method ?? "");
       if (!full_name || !phone || !address) throw new HttpError(400, "Заполните имя, телефон и адрес");
+      if (!PAYMENTS[payment_method]) throw new HttpError(400, "Выберите способ оплаты");
 
-      const cart = (await listCart(uid)).filter((c) => c.product.in_stock);
+      const { cart, profile, quote: q } = await quote(uid, !!body.use_bonus);
+      if (!profile.tg_phone) {
+        throw new HttpError(403, "Подтвердите номер телефона, чтобы оформить заказ", "need_phone");
+      }
       if (!cart.length) throw new HttpError(400, "Корзина пуста");
+
+      // Сначала списываем бонусы атомарно; если не хватило — заказ не создаём
+      if (q.bonus_used > 0) {
+        const { data: left, error } = await sb.rpc("add_bonus", { p_tg: uid, p_delta: -q.bonus_used });
+        if (error || left === null) throw new HttpError(409, "Баланс бонусов изменился, попробуйте ещё раз");
+      }
 
       // Цены берём из базы, а не из запроса клиента
       const items = cart.map((c) => ({
@@ -193,11 +279,18 @@ async function handle(action: string, body: any, user: TgUser) {
         qty: c.qty,
         photo: c.product.photo,
       }));
-      const total = items.reduce((s, i) => s + i.price * i.qty, 0);
 
-      const order = check(await sb.from("orders").insert({
-        telegram_id: uid, items, total, full_name, phone, address, comment: comment || null,
-      }).select().single()) as any;
+      const ins = await sb.from("orders").insert({
+        telegram_id: uid, items, comment: comment || null, full_name, phone, address, payment_method,
+        subtotal: q.subtotal, rank_discount: q.rank_discount, ref_discount: q.ref_discount,
+        bonus_used: q.bonus_used, total: q.total,
+      }).select().single();
+      if (ins.error) {
+        if (q.bonus_used > 0) await sb.rpc("add_bonus", { p_tg: uid, p_delta: q.bonus_used });
+        console.error(ins.error);
+        throw new HttpError(500, "Не удалось создать заказ");
+      }
+      const order = ins.data as any;
 
       check(await sb.from("cart_items").delete().eq("telegram_id", uid));
       check(await sb.from("profiles").update({ full_name, phone, address }).eq("telegram_id", uid));
@@ -205,11 +298,20 @@ async function handle(action: string, body: any, user: TgUser) {
       if (ADMIN_ID) {
         const lines = items.map((i) => `• ${esc(i.name)} × ${i.qty} — ${fmt(i.price * i.qty)}`).join("\n");
         const who = user.username ? `@${esc(user.username)}` : `id ${uid}`;
+        const money = [
+          `Товары: ${fmt(q.subtotal)}`,
+          q.rank_discount ? `Скидка ранга ${q.rank_name} (${q.rank_pct}%): −${fmt(q.rank_discount)}` : "",
+          q.ref_discount ? `Скидка за приглашение (${q.ref_pct}%): −${fmt(q.ref_discount)}` : "",
+          q.bonus_used ? `Бонусы: −${fmt(q.bonus_used)}` : "",
+        ].filter(Boolean).join("\n");
         const sent = await tg("sendMessage", {
           chat_id: ADMIN_ID,
           parse_mode: "HTML",
-          text: `🛒 <b>Новый заказ №${order.id}</b>\n\n${lines}\n\n<b>Итого: ${fmt(total)}</b>\n\n` +
-            `👤 ${esc(full_name)} (${who})\n📞 ${esc(phone)}\n📍 ${esc(address)}` +
+          text: `🛒 <b>Новый заказ №${order.id}</b>\n\n${lines}\n\n${money}\n<b>К оплате: ${fmt(q.total)}</b>\n` +
+            `💳 ${esc(PAYMENTS[payment_method])}\n\n` +
+            `👤 ${esc(full_name)} (${who}, ${esc(profile.public_id)})\n📞 ${esc(phone)}` +
+            (profile.tg_phone && profile.tg_phone !== phone ? ` · Telegram: ${esc(profile.tg_phone)}` : "") +
+            `\n📍 ${esc(address)}` +
             (comment ? `\n💬 ${esc(comment)}` : "") +
             `\n\nКнопки ниже меняют статус. Ответ на это сообщение уйдёт клиенту.`,
           reply_markup: statusKeyboard(order.id),
@@ -218,7 +320,8 @@ async function handle(action: string, body: any, user: TgUser) {
           await sb.from("orders").update({ admin_message_id: sent.result.message_id }).eq("id", order.id);
         }
       }
-      return { order, orders: await listOrders(uid) };
+      const fresh = await getProfile(uid);
+      return { order, orders: await listOrders(uid), profile: fresh, loyalty: await loyalty(uid, fresh) };
     }
 
     case "orders":
@@ -230,9 +333,9 @@ async function handle(action: string, body: any, user: TgUser) {
       const bytes = Uint8Array.from(atob(m[2]), (c) => c.charCodeAt(0));
       if (bytes.length > 5 * 1024 * 1024) throw new HttpError(413, "Фото слишком большое");
 
-      const recent = check(await sb.from("photo_requests").select("id", { count: "exact", head: false })
-        .eq("telegram_id", uid).gte("created_at", new Date(Date.now() - 3600_000).toISOString())) as any[];
-      if (recent.length >= 15) throw new HttpError(429, "Слишком много заявок, попробуйте позже");
+      const { count } = await sb.from("photo_requests").select("id", { count: "exact", head: true })
+        .eq("telegram_id", uid).gte("created_at", new Date(Date.now() - 3600_000).toISOString());
+      if ((count ?? 0) >= 15) throw new HttpError(429, "Слишком много заявок, попробуйте позже");
 
       const ext = m[1] === "jpeg" ? "jpg" : m[1];
       const path = `${uid}/${crypto.randomUUID()}.${ext}`;
@@ -283,7 +386,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     return json(await handle(String(body.action ?? ""), body, user));
   } catch (e) {
-    if (e instanceof HttpError) return json({ error: e.message }, e.status);
+    if (e instanceof HttpError) return json({ error: e.message, code: e.code }, e.status);
     console.error(e);
     return json({ error: "Ошибка сервера" }, 500);
   }
