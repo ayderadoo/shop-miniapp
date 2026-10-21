@@ -1,6 +1,9 @@
-import { createClient } from "jsr:@supabase/supabase-js@2";
+export { isUzbekPhone } from "./validation.ts";
+import { parseInitData } from "./validation.ts";
+import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 
-export const MINIAPP_URL = "https://shop-miniapp-two.vercel.app";
+export const MINIAPP_URL = Deno.env.get("MINIAPP_URL") || "https://shop-miniapp-two.vercel.app";
+export const SHOP_USERNAME = "ramp_uzbot";
 export const ADMIN_URL = `${MINIAPP_URL}/admin.html`;
 export const SUPPORT_USERNAME = "ramphelper";
 
@@ -14,7 +17,7 @@ export const STATUS: Record<string, string> = {
   new: "Новый — ждёт оплаты",
   review: "Чек на проверке",
   paid: "Оплачен",
-  bought: "Выкуплен в Китае",
+  bought: "Собирается",
   shipping: "В пути",
   arrived: "Прибыл в Ташкент",
   delivered: "Доставлен",
@@ -40,24 +43,32 @@ export const DEFAULT_PAYMENTS: Record<string, string> = {
 
 export const DEFAULT_CARDS = ["8600 0000 0000 0001"];
 
+// Два бота: «shop» — клиентский (магазин, приветствие, уведомления клиентам),
+// «admin» — служебный (новые заказы, чеки, заявки, админ-панель).
+// Токены двух ботов независимы: отсутствие клиентского токена не переключает регистрацию в админского бота.
+export type BotKind = "shop" | "admin";
+
 type Config = {
-  botToken: string; admins: number[]; promo: Promo; payments: Record<string, string>; cards: string[];
+  botToken: string; shopToken: string; admins: number[]; promo: Promo; payments: Record<string, string>; cards: string[];
 };
 let cache: { at: number; cfg: Config } | null = null;
 
 // Настройки из базы (токен бота, админы, скидки, оплата). Кэш на 20 секунд.
 export async function cfg(): Promise<Config> {
   if (cache && Date.now() - cache.at < 20_000) return cache.cfg;
-  const [{ data: s }, { data: a }] = await Promise.all([
+  const [settingsResult, adminsResult] = await Promise.all([
     sb.from("settings").select("key,value"),
     sb.from("admins").select("telegram_id"),
   ]);
+  if (settingsResult.error || adminsResult.error) throw new Error("Не удалось загрузить настройки");
+  const s = settingsResult.data, a = adminsResult.data;
   const m: Record<string, any> = Object.fromEntries((s ?? []).map((r: any) => [r.key, r.value]));
   const envAdmin = Number(Deno.env.get("ADMIN_ID") ?? 0);
   const admins = (a ?? []).map((r: any) => Number(r.telegram_id));
   if (envAdmin && !admins.includes(envAdmin)) admins.push(envAdmin);
   const c: Config = {
     botToken: Deno.env.get("BOT_TOKEN") || m.bot_token || "",
+    shopToken: Deno.env.get("SHOP_BOT_TOKEN") || m.client_bot_token || "",
     admins,
     promo: { ...DEFAULT_PROMO, ...(m.promo ?? {}) },
     payments: m.payments && Object.keys(m.payments).length ? m.payments : DEFAULT_PAYMENTS,
@@ -89,54 +100,114 @@ export function safeEqual(a: string, b: string) {
 }
 
 // Секрет вебхука выводится из токена бота, отдельный секрет не нужен
-export async function webhookSecret() {
-  return hex(await hmac(enc.encode((await cfg()).botToken), "webhook-secret")).slice(0, 48);
+export const tokenOf = async (bot: BotKind) => bot === "admin" ? (await cfg()).botToken : (await cfg()).shopToken;
+export const singleBot = async () => false;
+
+export async function webhookSecret(bot: BotKind = "admin") {
+  return hex(await hmac(enc.encode(await tokenOf(bot)), "webhook-secret")).slice(0, 48);
 }
 
 export type TgUser = { id: number; first_name?: string; last_name?: string; username?: string };
 
 // Проверка подписи Telegram для запросов из мини-эппа и админ-панели
-export async function verifyInitData(initData: string): Promise<TgUser | null> {
-  const token = (await cfg()).botToken;
-  if (!token) { console.error("auth: bot token is not configured"); return null; }
-  if (!initData) { console.error("auth: request without Telegram initData"); return null; }
-  const params = new URLSearchParams(initData);
-  const hash = params.get("hash");
-  if (!hash) { console.error("auth: initData without hash"); return null; }
-  params.delete("hash");
-  const dataCheck = [...params.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([k, v]) => `${k}=${v}`)
-    .join("\n");
-  const secret = await hmac(enc.encode("WebAppData"), token);
-  if (!safeEqual(hex(await hmac(secret, dataCheck)), hash)) {
-    console.error("auth: signature mismatch — the Mini App was opened from a different bot than the configured token");
-    return null;
+export async function verifyInitData(initData: string, bot: BotKind | "any" = "shop"): Promise<TgUser | null> {
+  const parsed = parseInitData(initData);
+  if (!parsed) return null;
+  const c = await cfg();
+  const tokens = bot === "any" ? [c.shopToken, c.botToken] : [bot === "shop" ? c.shopToken : c.botToken];
+  for (const token of new Set(tokens.filter(Boolean))) {
+    const secret = await hmac(enc.encode("WebAppData"), token);
+    if (safeEqual(hex(await hmac(secret, parsed.data)), parsed.hash)) return parsed.user;
   }
-  const authDate = Number(params.get("auth_date") ?? 0);
-  if (Date.now() / 1000 - authDate > 7 * 86400) { console.error("auth: initData expired"); return null; }
-  try {
-    const user = JSON.parse(params.get("user") ?? "null");
-    return user?.id ? user : null;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
-export async function tg(method: string, body: Record<string, unknown>) {
-  const token = (await cfg()).botToken;
+// Вызов Telegram Bot API. По умолчанию — от клиентского бота.
+export async function tg(method: string, body: Record<string, unknown>, bot: BotKind = "shop") {
+  const token = await tokenOf(bot);
+  if (!token) return { ok: false, description: "Бот не настроен" };
   const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-    method: "POST",
+    method: "POST", signal: AbortSignal.timeout(12_000),
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   const data = await r.json();
-  if (!data.ok) console.error("telegram", method, data.description);
+  if (!data.ok) console.error("telegram", bot, method, data.description);
   return data;
 }
 
-export const shopButton = (text = "🛍 Открыть RAMP") => ({
-  inline_keyboard: [[{ text, web_app: { url: MINIAPP_URL } }]],
+// Отправка файла (multipart) — нужна, чтобы переслать фото от админского бота клиенту через клиентский
+export async function tgUpload(method: string, field: string, file: Blob, filename: string,
+  fields: Record<string, unknown>, bot: BotKind = "shop") {
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(fields)) if (v !== undefined) fd.append(k, typeof v === "string" ? v : JSON.stringify(v));
+  fd.append(field, file, filename);
+  const r = await fetch(`https://api.telegram.org/bot${await tokenOf(bot)}/${method}`, { method: "POST", body: fd });
+  const data = await r.json();
+  if (!data.ok) console.error("telegram", bot, method, data.description);
+  return data;
+}
+
+// Переслать сообщение админа (из админского бота) клиенту в клиентский бот: текст, фото, файл
+export async function relayToClient(clientId: number, msg: any) {
+  if (await singleBot()) {
+    return tg("copyMessage", { chat_id: clientId, from_chat_id: msg.chat.id, message_id: msg.message_id });
+  }
+  const caption = msg.caption ?? undefined;
+  const media = msg.photo?.length ? { id: msg.photo[msg.photo.length - 1].file_id, method: "sendPhoto", field: "photo", name: "photo.jpg" }
+    : msg.document ? { id: msg.document.file_id, method: "sendDocument", field: "document", name: msg.document.file_name ?? "file" }
+    : msg.video ? { id: msg.video.file_id, method: "sendVideo", field: "video", name: "video.mp4" }
+    : null;
+  if (media) {
+    const f = await tg("getFile", { file_id: media.id }, "admin");
+    if (!f.ok) return f;
+    const blob = await (await fetch(`https://api.telegram.org/file/bot${await tokenOf("admin")}/${f.result.file_path}`)).blob();
+    return tgUpload(media.method, media.field, blob, media.name, { chat_id: String(clientId), caption });
+  }
+  if (msg.text) return tg("sendMessage", { chat_id: clientId, text: msg.text });
+  return { ok: false, description: "Поддерживаются текст, фото, видео и файлы" };
+}
+
+// Подключить вебхуки, команды и кнопку меню обоим ботам
+export async function setupBots() {
+  const c = await cfg();
+  const hook = `${Deno.env.get("SUPABASE_URL")}/functions/v1/bot`;
+  const report: string[] = [];
+  if (c.shopToken && c.shopToken === c.botToken) throw new Error("Основной и админский боты должны быть разными");
+  for (const bot of ["shop", "admin"] as BotKind[]) {
+    if (!await tokenOf(bot)) { report.push(`${bot}: токен не задан`); continue; }
+    const result = await tg("setWebhook", {
+      url: hook, secret_token: await webhookSecret(bot), allowed_updates: ["message", "callback_query"],
+      drop_pending_updates: false,
+    }, bot);
+    if (!result.ok) throw new Error(`Не удалось подключить ${bot}: ${result.description}`);
+    const commands = bot === "shop"
+      ? [{ command: "start", description: "Открыть RAMP" }, { command: "catalog", description: "Каталог товаров" }, { command: "myid", description: "Мой номер клиента" }]
+      : [{ command: "start", description: "Панель управления" }, { command: "admin", description: "Админ-панель" }];
+    await tg("setMyCommands", { commands }, bot);
+    // Удаляем старые команды для отдельных админов, оставшиеся от совмещённого бота.
+    for (const chat_id of c.admins) await tg("deleteMyCommands", { scope: { type: "chat", chat_id } }, bot);
+    const menu = await tg("setChatMenuButton", { menu_button: { type: "web_app", text: bot === "shop" ? "RAMP" : "Панель", web_app: { url: bot === "shop" ? MINIAPP_URL : ADMIN_URL } } }, bot);
+    if (!menu.ok) throw new Error("Не удалось обновить кнопку меню Telegram");
+    report.push(`${bot}: подключён`);
+  }
+  return report;
+}
+
+export async function botStatus() {
+  const entries = await Promise.all((["shop", "admin"] as BotKind[]).map(async (kind) => {
+    if (!await tokenOf(kind)) return [kind, { configured: false, username: kind === "shop" ? SHOP_USERNAME : null }];
+    const [me, hook] = await Promise.all([tg("getMe", {}, kind), tg("getWebhookInfo", {}, kind)]);
+    return [kind, { configured: me.ok, username: me.result?.username ?? null,
+      main_app: me.result?.has_main_web_app === true,
+      webhook_ok: hook.ok && hook.result?.url === `${Deno.env.get("SUPABASE_URL")}/functions/v1/bot`,
+      pending: hook.result?.pending_update_count ?? 0, error: hook.result?.last_error_message ?? null }];
+  }));
+  return Object.fromEntries(entries);
+}
+
+export const shopButton = (text = "RAMP", tab = "catalog") => ({
+  inline_keyboard: [[{ text, style: "primary", web_app: { url: `${MINIAPP_URL}/?tab=${encodeURIComponent(tab)}` } }]],
 });
 
 export function statusKeyboard(orderId: number) {
@@ -153,8 +224,8 @@ export function statusKeyboard(orderId: number) {
 export function receiptKeyboard(orderId: number) {
   return {
     inline_keyboard: [[
-      { text: "✅ Оплата подтверждена", callback_data: `rc:ok:${orderId}` },
-      { text: "❌ Отклонить", callback_data: `rc:no:${orderId}` },
+      { text: "✅ Оплата подтверждена", callback_data: `rc:ok:${orderId}`, style: "success" },
+      { text: "❌ Отклонить", callback_data: `rc:no:${orderId}`, style: "danger" },
     ]],
   };
 }
@@ -165,117 +236,65 @@ export async function notifyAdmins(
 ) {
   const { admins } = await cfg();
   await Promise.all(admins.map(async (chat_id) => {
-    const sent = await tg(method, { ...payload, chat_id });
+    const sent = await tg(method, { ...payload, chat_id }, "admin");
     if (sent.ok) {
       await sb.from("admin_messages").insert({ chat_id, message_id: sent.result.message_id, kind, ref_id: refId });
     }
   }));
 }
 
-// Привязка к пригласившему по его ID (RAMP-123456). Только до первого заказа.
+// Новые приглашения используют отдельный случайный токен. Старые ссылки поддерживаются.
 export async function applyReferral(uid: number, rawCode: string) {
-  const { promo } = await cfg();
   const code = String(rawCode ?? "").trim().toUpperCase().replace(/\s+/g, "");
-  if (!/^RAMP-\d{6}$/.test(code)) return { ok: false, error: "ID выглядит так: RAMP-123456" };
-
-  const { data: me } = await sb.from("profiles").select("telegram_id,referred_by")
-    .eq("telegram_id", uid).maybeSingle();
-  if (!me) return { ok: false, error: "Профиль не найден" };
-  if (me.referred_by) return { ok: false, error: "Код друга уже указан" };
-
-  const { count } = await sb.from("orders").select("id", { count: "exact", head: true })
-    .eq("telegram_id", uid).neq("status", "cancelled");
-  if ((count ?? 0) > 0) return { ok: false, error: "Код друга можно указать только до первого заказа" };
-
-  const { data: ref } = await sb.from("profiles").select("telegram_id,referred_by")
-    .eq("public_id", code).maybeSingle();
-  if (!ref) return { ok: false, error: "Пользователь с таким ID не найден" };
-  if (ref.telegram_id === uid) return { ok: false, error: "Нельзя указать собственный ID" };
-  if (ref.referred_by === uid) return { ok: false, error: "Этот пользователь пришёл по вашему приглашению" };
-
-  const { data: upd } = await sb.from("profiles")
-    .update({ referred_by: ref.telegram_id, referred_at: new Date().toISOString() })
-    .eq("telegram_id", uid).is("referred_by", null).select("telegram_id");
-  if (!upd?.length) return { ok: false, error: "Код друга уже указан" };
-
-  await tg("sendMessage", {
-    chat_id: ref.telegram_id,
-    text: `🎉 По вашему приглашению пришёл новый покупатель. Когда он оплатит заказ от ` +
-      `${fmt(promo.minQualifyingOrder)}, вы получите купон −${promo.inviterPct}% на следующий заказ.`,
-  });
+  const token=/^INVITE_([0-9A-F]{32})$/.exec(code);
+  if (!token && !/^RAMP-\d{6,18}$/.test(code)) return { ok: false, error: "Проверьте ссылку приглашения" };
+  const uuid=token?.[1].replace(/^(\w{8})(\w{4})(\w{4})(\w{4})(\w{12})$/,'$1-$2-$3-$4-$5');
+  const { data, error } = token ? await sb.rpc("ramp_apply_referral_token", {p_uid:uid,p_token:uuid}) : await sb.rpc("ramp_apply_referral", { p_uid: uid, p_code: code });
+  if (error) { const message=error.code === "P0001" ? error.message : "Не удалось применить приглашение";return {ok:false,error:message.replace("Нельзя указать собственный ID","Нельзя приглашать самого себя").replace("Пользователь с таким ID не найден","Ссылка приглашения не найдена").replace("Код друга уже указан","Приглашение уже применено").replace("Код друга можно указать только до первого заказа","Приглашение доступно только до первого заказа")}; }
+  if (data.changed) {
+    const { promo } = await cfg();
+    await bestEffort(() => tg("sendMessage", { chat_id: data.referrer,
+      text: `🎉 По вашему приглашению пришёл покупатель. После оплаты его заказа от ${fmt(promo.minQualifyingOrder)} вам купон −${promo.inviterPct}%.` }));
+  }
   return { ok: true };
 }
 
-// Купоны при смене статуса. Флаг ref_rewarded у приглашённого защищает от повторной выдачи.
-async function settleOrder(orderId: number, status: string) {
-  const { promo } = await cfg();
-  if (PAID_OR_LATER.includes(status)) {
-    const { data: o } = await sb.from("orders").select("id,telegram_id,subtotal").eq("id", orderId).single();
-    if (!o || (o.subtotal ?? 0) < promo.minQualifyingOrder) return;
-
-    const { data: buyer } = await sb.from("profiles").update({ ref_rewarded: true })
-      .eq("telegram_id", o.telegram_id).eq("ref_rewarded", false).not("referred_by", "is", null)
-      .select("telegram_id,referred_by").maybeSingle();
-    if (!buyer) return;
-
-    await sb.from("coupons").insert([
-      { telegram_id: buyer.referred_by, pct: promo.inviterPct, reason: "ref_inviter", source_order_id: o.id },
-      { telegram_id: buyer.telegram_id, pct: promo.inviteeNextPct, reason: "ref_invitee", source_order_id: o.id },
-    ]);
-    await tg("sendMessage", {
-      chat_id: buyer.referred_by,
-      text: `🎁 Ваш друг оплатил заказ — вам купон −${promo.inviterPct}% на следующий заказ. ` +
-        "Скидка применится автоматически при оформлении.",
-      reply_markup: shopButton(),
-    });
-    await tg("sendMessage", {
-      chat_id: buyer.telegram_id,
-      text: `🎁 Спасибо за заказ! Ваш купон −${promo.inviteeNextPct}% на следующий заказ уже в профиле.`,
-    });
-  }
-
-  // Отмена заказа возвращает использованный купон
-  if (status === "cancelled") {
-    await sb.from("coupons").update({ used_order_id: null, used_at: null }).eq("used_order_id", orderId);
-  }
+export async function getReferralLink(uid: number) {
+  const profile=await sb.from("profiles").select("referral_token").eq("telegram_id",uid).single();
+  if(profile.error || !profile.data?.referral_token)throw new Error("Не удалось получить ссылку приглашения");
+  const username=await getBotUsername();
+  return username?`https://t.me/${username}?start=invite_${profile.data.referral_token.replaceAll('-','')}`:null;
 }
 
-// Смена статуса заказа: из бота (кнопки) и из админ-панели
-export async function setOrderStatus(orderId: number, status: string) {
-  if (!STATUS[status]) return null;
-  const { data: order } = await sb.from("orders")
-    .update({ status, updated_at: new Date().toISOString() })
-    .eq("id", orderId).select("id,telegram_id,status").maybeSingle();
-  if (!order) return null;
-  await settleOrder(order.id, status);
-  await tg("sendMessage", {
-    chat_id: order.telegram_id,
-    parse_mode: "HTML",
-    text: `📦 Заказ №${order.id}: <b>${esc(STATUS[status])}</b>`,
-    reply_markup: shopButton("Мои заказы"),
+// Ошибка доставки уведомления не отменяет уже сохранённый заказ или платёж.
+export async function bestEffort(fn: () => Promise<unknown>) {
+  try { return await fn(); } catch { console.error("notification delivery failed"); return null; }
+}
+
+export async function setOrderStatus(orderId: number, status: string, reason = "", expected: string | null = null) {
+  const { data, error } = await sb.rpc("ramp_set_order_status", {
+    p_order_id: orderId, p_status: status, p_reason: reason, p_expected: expected,
   });
+  if (error) throw new Error(error.code === "P0001" ? error.message : "Не удалось обновить заказ");
+  if (!data?.order) return null;
+  const order = data.order;
+  if (data.changed) await bestEffort(() => tg("sendMessage", {
+    chat_id: order.telegram_id,
+    text: `📦 Заказ №${order.id}: ${STATUS[status]}${reason ? `\n${reason}` : ""}`,
+    reply_markup: shopButton("Мои заказы", "orders"),
+  }));
+  for (const reward of data.rewards ?? []) await bestEffort(() => tg("sendMessage", {
+    chat_id: reward.telegram_id, text: `🎁 Вам купон −${reward.pct}% за приглашение друга. Он применится к следующему заказу.`,
+    reply_markup: shopButton("Мои купоны", "profile"),
+  }));
   return order;
 }
 
-// Проверка чека админом: подтвердить (→ «Оплачен») или отклонить (→ снова ждёт оплаты)
 export async function reviewReceipt(orderId: number, approve: boolean, reason = "") {
-  const { data: o } = await sb.from("orders").select("id,telegram_id,status").eq("id", orderId).maybeSingle();
-  if (!o) return { ok: false, error: "Заказ не найден" };
-  if (o.status !== "review") return { ok: false, error: `Чек уже обработан: ${STATUS[o.status] ?? o.status}` };
-  if (approve) {
-    await setOrderStatus(orderId, "paid");
-    return { ok: true };
-  }
-  const why = reason || "Чек не прошёл проверку";
-  await sb.from("orders").update({ status: "new", reject_reason: why, updated_at: new Date().toISOString() })
-    .eq("id", orderId);
-  await tg("sendMessage", {
-    chat_id: o.telegram_id,
-    text: `❌ Оплата по заказу №${orderId} не подтверждена: ${why}.\n\n` +
-      "Проверьте сумму и реквизиты и загрузите чек ещё раз в разделе «Заказы».",
-    reply_markup: shopButton("Мои заказы"),
-  });
-  return { ok: true };
+  try {
+    const order = await setOrderStatus(orderId, approve ? "paid" : "new", approve ? "" : reason || "Чек не прошёл проверку", "review");
+    return order ? { ok: true } : { ok: false, error: "Заказ не найден" };
+  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Не удалось проверить чек" }; }
 }
 
 // Ответ клиенту по фотозаявке (из бота или админ-панели)
@@ -292,13 +311,16 @@ export async function answerPhotoRequest(id: number, text: string) {
   return pr;
 }
 
-let botUsername: string | null = null;
-export async function getBotUsername() {
-  if (!botUsername) {
-    const me = await tg("getMe", {});
-    botUsername = me.ok ? me.result.username : null;
+const usernames: Record<string, string> = {};
+// Имя клиентского бота (для реферальных ссылок)
+export async function getBotUsername(bot: BotKind = "shop") {
+  const token = await tokenOf(bot);
+  if (!token) return bot === "shop" ? SHOP_USERNAME : null;
+  if (!usernames[token]) {
+    const me = await tg("getMe", {}, bot);
+    if (me.ok) usernames[token] = me.result.username;
   }
-  return botUsername;
+  return usernames[token] ?? null;
 }
 
 export const normPhone = (p: string) => {
@@ -311,3 +333,4 @@ export const esc = (s: unknown) =>
 
 export const fmt = (n: number) =>
   Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ") + " сум";
+
