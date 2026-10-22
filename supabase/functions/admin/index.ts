@@ -54,6 +54,26 @@ async function uploadImage(dataUrl: string, folder: string) {
   return sb.storage.from("products").getPublicUrl(path).data.publicUrl;
 }
 
+// Фото удалённого товара стираются из хранилища, если их не используют другие товары и старые заказы.
+async function removeUnusedPhotos(urls: string[]) {
+  const prefix = sb.storage.from("products").getPublicUrl("").data.publicUrl;
+  const paths: string[] = [];
+  for (const url of urls) {
+    if (!url.startsWith(prefix)) continue;
+    const path = decodeURIComponent(url.slice(prefix.length).split("?")[0]);
+    const [cover, gallery, orders] = await Promise.all([
+      sb.from("products").select("id", { count: "exact", head: true }).eq("photo", url),
+      sb.from("products").select("id", { count: "exact", head: true }).filter("photos", "cs", JSON.stringify([url])),
+      sb.from("orders").select("id", { count: "exact", head: true }).like("search_items", `%${path}%`),
+    ]);
+    if (cover.error || gallery.error || orders.error) continue;
+    if (!cover.count && !gallery.count && !orders.count) paths.push(path);
+  }
+  if (!paths.length) return;
+  const removed = await sb.storage.from("products").remove(paths);
+  if (removed.error) console.error("product photo cleanup failed", removed.error);
+}
+
 async function handle(action: string, b: any, me: TgUser) {
   const contentResult=await adminContent(action,b,me);
   if(contentResult!==undefined)return contentResult;
@@ -71,7 +91,13 @@ async function handle(action: string, b: any, me: TgUser) {
       if(b.id)q=q.eq("id",int(b.id));
       if (b.status && STATUS[b.status]) q = q.eq("status", b.status);
       const s = safeSearch(b.q);
-      if (s) {
+      const rp = /^RP-?(\d{1,9})$/i.exec(s);
+      if (rp) {
+        // Точный личный ID клиента: RP-12 не должен находить RP-120
+        const { data: byNo } = await sb.from("profiles").select("telegram_id").eq("user_no", Number(rp[1])).maybeSingle();
+        q = byNo ? q.eq("telegram_id", byNo.telegram_id) : q.eq("id", -1);
+      }
+      else if (s) {
         if (/^\d+$/.test(s) && s.length > 9) q = q.ilike("phone", `*${s}*`);
         else if (/^\d+$/.test(s)) {
           // Число: номер заказа, номер клиента или часть телефона
@@ -139,7 +165,10 @@ async function handle(action: string, b: any, me: TgUser) {
         active: b.active !== false,
         in_stock: b.in_stock !== false,
       };
-      if(b.sku!==undefined || !b.id){try{row.sku=normalizeSku(b.sku);}catch(e){throw new HttpError(400,(e as Error).message);}}
+      // Артикул RM-6xxxxx. Пустое поле: новому товару база выдаст следующий номер, у старого артикул не меняется.
+      if (String(b.sku ?? "").trim()) {
+        try { row.sku = normalizeSku(b.sku); } catch (e) { throw new HttpError(400, (e as Error).message); }
+      } else if (!b.id) row.sku = null;
       if (!row.name) throw new HttpError(400, "Укажите название");
       if ((row.price as number) <= 0 || (row.price as number)>100_000_000) throw new HttpError(400, "Цена должна быть больше нуля");
       if (b.options !== undefined) {
@@ -168,12 +197,31 @@ async function handle(action: string, b: any, me: TgUser) {
       return { hidden:true };
     }
 
+    // Полное удаление (кнопка «Удалить навсегда»). deleteProduct оставлен для старых версий панели: он только скрывает.
+    case "removeProduct": {
+      const id = int(b.id, "товар");
+      const product = check(await sb.from("products").select("id,name,sku,photo,photos").eq("id", id).maybeSingle()) as any;
+      if (!product) throw new HttpError(404, "Товар не найден");
+      // Снимаем товар с витрин «Похожие товары» других товаров.
+      const linked = check(await sb.from("products").select("id,related_ids").contains("related_ids", [id])) as any[];
+      for (const p of linked) {
+        check(await sb.from("products").update({ related_ids: p.related_ids.filter((x: number) => x !== id) }).eq("id", p.id));
+      }
+      // Отзывы о товаре удаляются, корзины и «Желаемое» очищает база (каскад). Заказы хранят копию товара.
+      check(await sb.from("product_reviews").delete().eq("product_id", id));
+      check(await sb.from("products").delete().eq("id", id));
+      await removeUnusedPhotos([...new Set([product.photo, ...(product.photos ?? [])].filter(Boolean))] as string[]);
+      return { removed: true, id };
+    }
+
     /* ---------- Клиенты ---------- */
     case "users": {
       const offset=Math.max(0,int(b.offset ?? 0));
       let q = sb.from("profiles").select(PROFILE_COLS).order("created_at", { ascending: false }).order("telegram_id").range(offset,offset+99);
       const s = safeSearch(b.q).replace(/^@/,"");
-      if (s) {
+      const rp = /^RP-?(\d{1,9})$/i.exec(s);
+      if (rp) q = q.eq("user_no", Number(rp[1]));
+      else if (s) {
         q = q.or([
           `delivery_id.ilike.*${s}*`, `public_id.ilike.*${s}*`, `username.ilike.*${s}*`, `first_name.ilike.*${s}*`,
           `full_name.ilike.*${s}*`, `phone.ilike.*${s}*`, `tg_phone.ilike.*${s}*`,

@@ -70,7 +70,7 @@ test('shop /start, own phone verification, stable ID and webhook deduplication',
  f.config.shopToken='';assert.equal((await f.send('shop',{from:{id:101},text:'/start'},14)).status,403);
 });
 
-test("UZ phone format and SKU normalization",()=>{assert.ok(isUzbekPhone("+998901234567"));for(const phone of ["+79991234567","+99890123456","+9989012345678","998901234567",null])assert.equal(isUzbekPhone(phone),false);assert.equal(normalizeSku(" rmp-001 "),"RMP-001");assert.throws(()=>normalizeSku(""));});
+test("UZ phone format and SKU normalization",()=>{assert.ok(isUzbekPhone("+998901234567"));for(const phone of ["+79991234567","+99890123456","+9989012345678","998901234567",null])assert.equal(isUzbekPhone(phone),false);for(const [raw,sku] of [[" rm-600001 ","RM-600001"],["600123","RM-600123"],["rm 0600124","RM-600124"],["RM-1234567","RM-1234567"]])assert.equal(normalizeSku(raw),sku);for(const bad of ["","RMP-001","RM-599999","RM-12","RM-1000000000","RM-6000x1"])assert.throws(()=>normalizeSku(bad));});
 
 test('foreign own contact is rejected and does not verify the profile',async()=>{
  const f=await setup();await f.send('shop',{from:{id:101},text:'/start'},20);

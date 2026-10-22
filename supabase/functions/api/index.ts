@@ -86,7 +86,7 @@ async function listOrders(uid: number) {
 
 async function listPhotoRequests(uid: number) {
   const rows = check(await sb.from("photo_requests")
-    .select("id,photo_path,comment,status,answer,created_at,answered_at")
+    .select("id,photo_path,media_type,comment,status,answer,created_at,answered_at")
     .eq("telegram_id", uid)
     .order("created_at", { ascending: false })
     .limit(30)) as any[];
@@ -94,6 +94,15 @@ async function listPhotoRequests(uid: number) {
   const { data: urls } = await sb.storage.from("requests")
     .createSignedUrls(rows.map((r) => r.photo_path), 3600);
   return rows.map((r, i) => ({ ...r, photo_url: urls?.[i]?.signedUrl ?? null }));
+}
+
+const REQUEST_VIDEO: Record<string, string> = { "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov" };
+const REQUEST_VIDEO_MAX = 50 * 1024 * 1024; // до 20 МБ админы получают видео в боте, больше — ссылкой
+
+async function requestQuota(uid: number) {
+  const { count } = await sb.from("photo_requests").select("id", { count: "exact", head: true })
+    .eq("telegram_id", uid).gte("created_at", new Date(Date.now() - 3600_000).toISOString());
+  if ((count ?? 0) >= 15) throw new HttpError(429, "Слишком много заявок, попробуйте позже");
 }
 
 const COUPON_LABEL: Record<string, string> = {
@@ -338,44 +347,87 @@ async function handle(action: string, body: any, user: TgUser) {
       await bestEffort(() => notifyAdmins("receipt", orderId, "sendPhoto", {
         photo: signed?.signedUrl,
         parse_mode: "HTML",
-        caption: `🧾 <b>Чек по заказу №${orderId}</b>\nКлиент №${profile.user_no} · ${esc(profile.full_name || profile.first_name || "")}\n` +
+        caption: `🧾 <b>Чек по заказу №${orderId}</b>\nКлиент ${esc(profile.delivery_id)} · ${esc(profile.full_name || profile.first_name || "")}\n` +
           `Сумма к оплате: <b>${fmt(o.total)}</b>\nКарта: ${esc(o.pay_card || "—")}\n\nПроверьте поступление и нажмите кнопку.`,
         reply_markup: receiptKeyboard(orderId),
       }));
       return { orders: await listOrders(uid) };
     }
 
-    case "photoRequest": {
-      const m = /^data:image\/(jpeg|png|webp);base64,(.+)$/.exec(String(body.image ?? ""));
-      if (!m) throw new HttpError(400, "Нужна картинка JPG, PNG или WEBP");
-      const bytes = Uint8Array.from(atob(m[2]), (c) => c.charCodeAt(0));
-      if (bytes.length > 5 * 1024 * 1024) throw new HttpError(413, "Фото слишком большое");
-
-      const { count } = await sb.from("photo_requests").select("id", { count: "exact", head: true })
-        .eq("telegram_id", uid).gte("created_at", new Date(Date.now() - 3600_000).toISOString());
-      if ((count ?? 0) >= 15) throw new HttpError(429, "Слишком много заявок, попробуйте позже");
-
-      const ext = m[1] === "jpeg" ? "jpg" : m[1];
+    case "createRequestUpload": {
+      // Видео для поиска загружается напрямую в хранилище по одноразовой ссылке, а не через JSON.
+      const mime = String(body.mime ?? ""), size = Number(body.size), ext = REQUEST_VIDEO[mime];
+      if (!ext || !Number.isSafeInteger(size) || size < 1 || size > REQUEST_VIDEO_MAX) {
+        throw new HttpError(400, "Видео MP4, MOV или WebM — до 50 МБ");
+      }
+      await requestQuota(uid);
+      const { data: recent } = await sb.storage.from("requests").list(String(uid), {
+        limit: 30, sortBy: { column: "created_at", order: "desc" },
+      });
+      const hourAgo = Date.now() - 3600_000;
+      if ((recent ?? []).filter((f) => Date.parse(f.created_at) > hourAgo).length >= 20) {
+        throw new HttpError(429, "Слишком много загрузок, попробуйте позже");
+      }
       const path = `${uid}/${crypto.randomUUID()}.${ext}`;
-      const up = await sb.storage.from("requests").upload(path, bytes, { contentType: `image/${m[1]}` });
-      if (up.error) {
-        console.error(up.error);
-        throw new HttpError(500, "Не удалось сохранить фото");
+      const signed = await sb.storage.from("requests").createSignedUploadUrl(path);
+      if (signed.error) {
+        console.error(signed.error);
+        throw new HttpError(500, "Не удалось подготовить загрузку видео");
+      }
+      return { path, signed_url: signed.data.signedUrl };
+    }
+
+    case "photoRequest": {
+      await requestQuota(uid);
+      let path: string;
+      let mediaType: "image" | "video" = "image";
+      if (body.video_path !== undefined) {
+        // Видео уже загружено по ссылке из createRequestUpload: проверяем, что файл наш, целиком и это видео.
+        path = String(body.video_path);
+        const name = path.slice(String(uid).length + 1);
+        if (!path.startsWith(`${uid}/`) || !/^[0-9a-f-]{36}\.(mp4|webm|mov)$/.test(name)) {
+          throw new HttpError(400, "Видео не найдено, загрузите его снова");
+        }
+        const { data: files } = await sb.storage.from("requests").list(String(uid), { search: name, limit: 5 });
+        const file = files?.find((f) => f.name === name);
+        const size = Number(file?.metadata?.size ?? 0);
+        if (!file || !String(file.metadata?.mimetype ?? "").startsWith("video/") || size < 1 || size > REQUEST_VIDEO_MAX) {
+          throw new HttpError(400, "Видео не загрузилось до конца. Попробуйте ещё раз");
+        }
+        const { count: used } = await sb.from("photo_requests").select("id", { count: "exact", head: true }).eq("photo_path", path);
+        if (used) throw new HttpError(409, "Эта заявка уже отправлена");
+        mediaType = "video";
+      } else {
+        const m = /^data:image\/(jpeg|png|webp);base64,(.+)$/.exec(String(body.image ?? ""));
+        if (!m) throw new HttpError(400, "Нужна картинка JPG, PNG или WEBP");
+        const bytes = Uint8Array.from(atob(m[2]), (c) => c.charCodeAt(0));
+        if (bytes.length > 5 * 1024 * 1024) throw new HttpError(413, "Фото слишком большое");
+        const ext = m[1] === "jpeg" ? "jpg" : m[1];
+        path = `${uid}/${crypto.randomUUID()}.${ext}`;
+        const up = await sb.storage.from("requests").upload(path, bytes, { contentType: `image/${m[1]}` });
+        if (up.error) {
+          console.error(up.error);
+          throw new HttpError(500, "Не удалось сохранить фото");
+        }
       }
       const comment = str(body.comment, 500);
       const req = check(await sb.from("photo_requests").insert({
-        telegram_id: uid, photo_path: path, comment: comment || null,
+        telegram_id: uid, photo_path: path, media_type: mediaType, comment: comment || null,
       }).select().single()) as any;
 
       const { data: signed } = await sb.storage.from("requests").createSignedUrl(path, 86400);
       const who = user.username ? `@${esc(user.username)}` : esc(user.first_name ?? `id ${uid}`);
-      await bestEffort(() => notifyAdmins("photo", req.id, "sendPhoto", {
-        photo: signed?.signedUrl,
-        parse_mode: "HTML",
-        caption: `📷 <b>Заявка по фото №${req.id}</b> от ${who}` +
-          (comment ? `\n💬 ${esc(comment)}` : "") +
-          `\n\n↩️ Ответьте на это сообщение — ответ уйдёт клиенту.`,
-      }));
+      const caption = `${mediaType === "video" ? "🎬" : "📷"} <b>Заявка по ${mediaType === "video" ? "видео" : "фото"} №${req.id}</b> от ${who}` +
+        (comment ? `\n💬 ${esc(comment)}` : "") +
+        `\n\n↩️ Ответьте на это сообщение — ответ уйдёт клиенту.`;
+      if (mediaType === "video") {
+        // Telegram забирает по ссылке видео до 20 МБ; если не смог (размер, формат) — шлём ссылку текстом.
+        await bestEffort(() => notifyAdmins("photo", req.id, "sendVideo",
+          { video: signed?.signedUrl, supports_streaming: true, parse_mode: "HTML", caption },
+          [["sendMessage", { parse_mode: "HTML", text: `${caption}\n\n<a href="${esc(signed?.signedUrl ?? "")}">▶️ Открыть видео</a>` }]]));
+      } else {
+        await bestEffort(() => notifyAdmins("photo", req.id, "sendPhoto", { photo: signed?.signedUrl, parse_mode: "HTML", caption }));
+      }
       return { requests: await listPhotoRequests(uid) };
     }
 

@@ -22,10 +22,12 @@ export function normalizeOptions(raw: unknown) {
 
 export const isUzbekPhone = (value: unknown) => /^\+998\d{9}$/.test(String(value ?? ""));
 
+// Артикул RM- и номер от 600000: «600123», «rm 600123» и «RM-600123» дают RM-600123.
 export function normalizeSku(value: unknown) {
-  const sku=String(value ?? "").trim().toUpperCase();
-  if (!sku || sku.length>64 || /[\u0000-\u001f\u007f]/.test(sku)) throw new Error("Укажите артикул: до 64 символов");
-  return sku;
+  const m=/^(?:RM-?)?(\d{1,9})$/.exec(String(value ?? "").toUpperCase().replace(/\s+/g,""));
+  const n=m ? Number(m[1]) : NaN;
+  if (!(n>=600_000 && n<=999_999_999)) throw new Error("Артикул — RM- и номер от 600000, например RM-600001");
+  return `RM-${n}`;
 }
 
 export function pickVariant(product: any, raw: unknown) {

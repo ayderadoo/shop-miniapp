@@ -97,6 +97,15 @@
     .photo-pick { display: flex; gap: 12px; align-items: center; }
     .photo-pick img, .photo-pick .ph { width: 96px; height: 96px; border-radius: 12px; object-fit: cover; background: var(--bg2); flex: none; }
     .req-img { width: 100%; max-height: 280px; object-fit: contain; border-radius: 12px; background: var(--bg2); margin: 10px 0; }
+    video.req-img { background: #000; display: block; }
+    .sku-field { display: flex; align-items: center; background: var(--bg2); border: 1px solid var(--outline); border-radius: 10px; }
+    .sku-field:focus-within { border-color: var(--tile); }
+    .sku-field span { padding-left: 12px; font-size: 16px; font-weight: 800; }
+    .admin .sku-field input { border: 0; background: transparent; padding-left: 1px; font-weight: 700; }
+    .admin .sku-field input:focus, .admin .sku-field input:focus-visible { outline: none; box-shadow: none; }
+    .sku-field:focus-within { outline: 2px solid var(--tile); outline-offset: 1px; }
+    .cat-picks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .cat-picks .chip { min-height: 34px; padding: 6px 12px; font-size: 13px; }
     .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .link { color: var(--link); font-weight: 700; }
 
@@ -333,7 +342,7 @@
         $("oList").innerHTML = S.orders.length ? S.orders.map((o) => `
           <button class="card" data-order="${o.id}">
             <div class="row"><span class="strong">№${o.id} · ${fmt(o.total)}</span><span class="pill ${pillCls(o.status)}">${esc(S.statuses[o.status] || o.status)}</span></div>
-            <div class="muted" style="margin-top:4px">${dt(o.created_at)} · Клиент №${o.user?.user_no ?? "?"} · ${esc(o.full_name || who(o.user))}</div>
+            <div class="muted" style="margin-top:4px">${dt(o.created_at)} · ${esc(o.user?.delivery_id || o.delivery_id || "Клиент")} · ${esc(o.full_name || who(o.user))}</div>
             <div class="small ellipsis" style="margin-top:4px">${o.items.map((i) => `${i.sku ? `<b>${esc(i.sku)}</b> · `:""}${esc(i.name)}${i.variant ? ` (${esc(i.variant)})` : ""} × ${i.qty}`).join(", ")}</div>
           </button>`).join("") : `<div class="empty">Заказов нет</div>`;
       } catch (e) { lockOut(e); }
@@ -374,7 +383,7 @@
         <div class="section">
           <h3>Доставка</h3><div class="kv"><span>Постоянный ID клиента</span><b>${esc(o.delivery_id || o.user?.delivery_id || "—")}</b></div><label>Трек-номер / номер отправления</label><input id="eoTracking" maxlength="100" value="${esc(o.tracking_number || "")}"><label>Комментарий по доставке (увидит клиент)</label><textarea id="eoDeliveryNote" maxlength="1000">${esc(o.delivery_note || "")}</textarea>
           <h3 style="margin-top:14px">Клиент</h3>
-          <button class="link" data-user="${o.telegram_id}">Клиент №${o.user?.user_no ?? "?"} · ${esc(o.full_name || who(o.user) || "Открыть")}</button>
+          <button class="link" data-user="${o.telegram_id}">${esc(o.user?.delivery_id || o.delivery_id || "Клиент")} · ${esc(o.full_name || who(o.user) || "Открыть")}</button>
           <label>Имя</label><input id="eoName" value="${esc(o.full_name)}">
           <label>Телефон</label><input id="eoPhone" value="${esc(o.phone)}">
           <label>Адрес</label><textarea id="eoAddr">${esc(o.address)}</textarea>
@@ -430,6 +439,9 @@
       });
     }
 
+    // Артикулы RM-600000…: в форме меняется только число
+    const skuNumber = (sku) => /^RM-(\d+)$/.exec(sku || "")?.[1] || "";
+    const nextSkuNumber = () => String(Math.max(599999, ...S.products.map((x) => Number(skuNumber(x.sku)) || 0)) + 1);
     const optionTemplates={clothes:{name:"Размер",values:["XS","S","M","L","XL","XXL"]},shoes:{name:"Размер",values:["36","37","38","39","40","41","42","43","44","45"]},length:{name:"Длина",values:["0.5 м","1 м","2 м","3 м"]},volume:{name:"Объём",values:["250 мл","500 мл","1 л"]},color:{name:"Цвет",values:["Чёрный","Белый","Синий"]}};
     const optionEditor = (o={name:"",values:[]})=>`<div class="option-editor" data-option-row><div class="row"><input data-option-name placeholder="Название: например Размер" value="${esc(o.name)}"><button class="link" data-remove-option>Убрать</button></div><label>Варианты, каждый с новой строки</label><textarea data-option-values placeholder="S&#10;M&#10;XL + 10000">${esc(o.values.map(v=>v.label+(v.add ? ` + ${v.add}` : '')).join('\n'))}</textarea><div class="muted">Доплата необязательна: XL + 10000</div></div>`;
     function readOptions() {
@@ -449,13 +461,15 @@
           <div class="gallery-editor" id="epPhotos">${galleryEditorHtml()}</div>
           <label class="btn sec sm" for="epFile" style="display:inline-flex;margin:0">+ Добавить фотографии</label>
           <input type="file" id="epFile" accept="image/*" multiple hidden>
-          <label>Артикул *</label><input id="epSku" maxlength="64" spellcheck="false" placeholder="Например RAMP-HD-001" value="${esc(p.sku || "")}"><div class="muted">Сохраняется в заказах и таблице закупок. У каждого товара — свой артикул.</div>
+          <label for="epSku">Артикул</label><div class="sku-field"><span>RM-</span><input id="epSku" inputmode="numeric" maxlength="9" spellcheck="false" autocomplete="off" value="${esc(skuNumber(p.sku) || (isNew ? nextSkuNumber() : ""))}"></div><div class="muted">Номер от 600000 — меняйте только цифры. Новому товару подставляется следующий свободный номер. Артикул сохраняется в заказах и таблице закупок.</div>
           <label>Название *</label><input id="epName" maxlength="200" value="${esc(p.name)}">
           <div class="two">
             <div><label>Цена, сум *</label><input id="epPrice" inputmode="numeric" value="${esc(p.price)}"></div>
             <div><label>Категория</label><input id="epCat" list="catList" maxlength="60" value="${esc(p.category || "")}"></div>
           </div>
           <datalist id="catList">${cats.map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
+          ${cats.length ? `<div class="cat-picks">${cats.map((c) => `<button type="button" class="chip ${p.category === c ? "on" : ""}" data-pick-cat="${esc(c)}">${esc(c)}</button>`).join("")}</div>` : ""}
+          <div class="muted">Категория — это раздел каталога. Выберите готовую или впишите новую, например «Наушники»: она сразу появится в каталоге отдельной кнопкой.</div>
           <label>Описание</label><textarea id="epDesc" maxlength="3000" style="min-height:110px">${esc(p.description || "")}</textarea>
           <label>Характеристики</label><textarea id="epSpecs" placeholder="Материал: хлопок&#10;Вес: 300 г">${esc((p.specs || []).map(x=>`${x.name}: ${x.value}`).join('\n'))}</textarea>
           <label>Состав</label><textarea id="epComposition" maxlength="3000" placeholder="Например: 80% хлопок, 20% полиэстер">${esc(p.composition || '')}</textarea>
@@ -476,7 +490,7 @@
           <div class="toggle"><span>В наличии</span><button class="switch ${p.in_stock ? "on" : ""}" data-sw="in_stock" role="switch"></button></div>
           <div class="muted">Если нет в наличии, покупатели смогут добавить товар в «Желаемое».</div>
         </div>
-        ${isNew ? "" : `<div class="section"><button class="btn danger" data-act="delProduct">Скрыть товар</button></div>`}`,
+        ${isNew ? "" : `<div class="section">${p.active ? `<button class="btn sec" data-act="delProduct">Скрыть из каталога</button><div style="height:8px"></div>` : ""}<button class="btn danger" data-act="removeProduct">Удалить товар навсегда</button><div class="muted" style="margin-top:6px">Товар исчезнет из каталога, корзин и «Желаемого», отзывы о нём удалятся. В старых заказах он останется.</div></div>`}`,
         `<button class="btn" data-act="saveProduct">Сохранить</button>`);
       S.cur.render = render;
       openSheet(render);
@@ -492,9 +506,9 @@
         $("uChips").innerHTML = `<button class="chip ${!S.uFilter ? "on" : ""}" data-uf="">Все</button><button class="chip ${S.uFilter === "blocked" ? "on" : ""}" data-uf="blocked">Заблокированные</button><button class="chip ${S.uFilter==='registry' ? 'on':''}" data-uf="registry">Реестр выданных ID</button>`;
         $("uList").innerHTML = S.users.length ? S.users.map((u) => `
           <button class="card ${S.uFilter==='registry'?'id-registry-card':''}" data-user="${u.telegram_id}">
-            <div class="row"><span class="strong ellipsis">№${u.user_no} · ${esc(u.full_name || [u.first_name, u.last_name].filter(Boolean).join(" ") || "Без имени")}</span><span class="muted">${esc(u.delivery_id || "")}</span></div>
+            <div class="row"><span class="strong ellipsis">${esc(u.delivery_id || "")} · ${esc(u.full_name || [u.first_name, u.last_name].filter(Boolean).join(" ") || "Без имени")}</span></div>
             <div class="muted" style="margin-top:4px">${u.username ? "@" + esc(u.username) + " · " : ""}${esc(u.tg_phone || u.phone || "номер не подтверждён")}</div>
-            <div class="sku-label">Доставки: <b>${esc(u.delivery_id || "—")}</b> · Выдан ${day(u.created_at)}</div>
+            <div class="sku-label">Личный ID: <b>${esc(u.delivery_id || "—")}</b> · Выдан ${day(u.created_at)}</div>
             ${u.blocked ? `<span class="pill red" style="margin-top:6px;display:inline-block">Заблокирован</span>` : ""}
           </button>`).join("") : `<div class="empty">Никого не нашли</div>`;
       } catch (e) { lockOut(e); }
@@ -504,11 +518,10 @@
       let d;
       try { d = await api("user", { id }); } catch (e) { return toast(e.message); }
       const u = d.user;
-      const name = `№${u.user_no} · ` + (u.full_name || [u.first_name, u.last_name].filter(Boolean).join(" ") || "Без имени");
+      const name = `${u.delivery_id || "Клиент"} · ` + (u.full_name || [u.first_name, u.last_name].filter(Boolean).join(" ") || "Без имени");
       S.cur = { type: "user", u, blocked: u.blocked };
       const render = () => setSheet(name, `
         <div class="section">
-          <div class="kv"><span>Номер клиента</span><span class="strong">№${u.user_no}</span></div>
           <div class="kv"><span>Личный ID</span><b>${esc(u.delivery_id || "—")}</b></div>
           <div class="kv"><span>Telegram</span><span>${u.username ? "@" + esc(u.username) : "—"} · ${u.telegram_id}</span></div>
           <div class="kv"><span>Телефон Telegram</span><span>${esc(u.tg_phone || "не подтверждён")}</span></div>
@@ -573,7 +586,7 @@
           <div class="card">
             <div class="row"><span class="strong">Заявка №${r.id}</span><span class="pill ${r.status === "answered" ? "done" : "new"}">${r.status === "answered" ? "Есть ответ" : "Ждёт ответа"}</span></div>
             <div class="muted" style="margin-top:4px">${dt(r.created_at)} · <button class="link" data-user="${r.telegram_id}">${esc(who(r.user))} ${esc(r.user?.delivery_id || "")}</button></div>
-            ${r.photo_url ? `<img class="req-img" src="${esc(r.photo_url)}" alt="Фото от клиента" loading="lazy">` : ""}
+            ${r.photo_url ? (r.media_type === "video" ? `<video class="req-img" src="${esc(r.photo_url)}" controls playsinline preload="metadata"></video>` : `<img class="req-img" src="${esc(r.photo_url)}" alt="Фото от клиента" loading="lazy">`) : ""}
             ${r.comment ? `<div class="small">💬 ${esc(r.comment)}</div>` : ""}
             ${r.answer ? `<div class="small" style="margin-top:8px;background:var(--bg2);border-radius:10px;padding:10px">${esc(r.answer)}</div>` : ""}
             <textarea data-ans="${r.id}" placeholder="${r.answer ? "Отправить ещё ответ" : "Нашли товар? Напишите название, цену в сумах и срок"}" style="margin-top:10px"></textarea>
@@ -837,6 +850,7 @@
 
     $("sheet").addEventListener('input',e=>{if(e.target.id==='epRelatedSearch'){const q=e.target.value.toLowerCase().trim();$("epRelated").querySelectorAll('[data-related-label]').forEach(row=>row.hidden=!row.textContent.toLowerCase().includes(q));}});
     async function sheetAction(e) {
+      const pick=e.target.closest('[data-pick-cat]');if(pick){$("epCat").value=pick.dataset.pickCat;document.querySelectorAll('[data-pick-cat]').forEach(c=>c.classList.toggle('on',c===pick));return;}
       const preset=e.target.closest('[data-delivery-preset]');if(preset){[$("epDeliveryMin").value,$("epDeliveryMax").value]=preset.dataset.deliveryPreset.split(',');return;}
       const move=e.target.closest('[data-photo-move]'),cover=e.target.closest('[data-photo-cover]'),remove=e.target.closest('[data-photo-remove]');
       if(move||cover||remove){if(S.cur.photosBusy)return;const photos=S.cur.photos;if(remove)photos.splice(Number(remove.dataset.photoRemove),1);if(cover)photos.unshift(...photos.splice(Number(cover.dataset.photoCover),1));if(move){const i=Number(move.dataset.photoIndex),j=i+Number(move.dataset.photoMove);if(j>=0 && j<photos.length)[photos[i],photos[j]]=[photos[j],photos[i]];}$("epPhotos").innerHTML=galleryEditorHtml();return;}
@@ -899,19 +913,26 @@
         const options=readOptions();
         const specs=$("epSpecs").value.split("\n").map(line=>{const at=line.indexOf(":");return at>0?{name:line.slice(0,at).trim(),value:line.slice(at+1).trim()}:{name:'',value:''};}).filter(x=>x.name && x.value);
         const price = Number(String($("epPrice").value).replace(/\s/g, ""));
-        if (!$("epSku").value.trim())return toast("Укажите артикул");
+        const skuNo=$("epSku").value.replace(/\D/g,"");
+        if(skuNo && (Number(skuNo)<600000 || skuNo.length>9))return toast("Артикул — номер от 600000, например 600001");
         if (!$("epName").value.trim()) return toast("Укажите название");
         if (!price || price <= 0) return toast("Укажите цену");
-        const payload={id:P.id,sku:$("epSku").value,name:$("epName").value,price,category:$("epCat").value,description:$("epDesc").value,active:P.active,in_stock:P.in_stock,options,specs,composition:$("epComposition").value,care:$("epCare").value,delivery_min_days,delivery_max_days,delivery_note:$("epDeliveryNote").value,related_ids};
+        const payload={id:P.id,sku:skuNo?`RM-${Number(skuNo)}`:"",name:$("epName").value,price,category:$("epCat").value,description:$("epDesc").value,active:P.active,in_stock:P.in_stock,options,specs,composition:$("epComposition").value,care:$("epCare").value,delivery_min_days,delivery_max_days,delivery_note:$("epDeliveryNote").value,related_ids};
         return run(act, async () => {
           for(let i=0;i<cur.photos.length;i++){const photo=cur.photos[i];if(!photo.url){toast(`Загружаем фото ${i+1} из ${cur.photos.length}…`);photo.url=(await api('uploadProductPhoto',{image:photo.data})).url;if(!photo.url)throw new Error('Не удалось загрузить фото');}}
           await api("saveProduct", {...payload,photos:cur.photos.map(photo=>photo.url)});
           closeAll(); loadProducts();
         }, "Товар сохранён");
       }
+      if (a === "removeProduct") {
+        const P = S.cur.p, title = P.name.length > 60 ? P.name.slice(0, 57) + "…" : P.name;
+        const go = () => run(act, async () => { await api("removeProduct", { id: P.id }); closeAll(); loadProducts(); }, "Товар удалён");
+        const text = `Удалить «${title}» навсегда? Он исчезнет из каталога, корзин и «Желаемого». Отменить нельзя.`;
+        return tg?.showConfirm ? tg.showConfirm(text, (y) => y && go()) : (confirm(text) && go());
+      }
       if (a === "delProduct") {
         const go = () => run(act, async () => { await api("deleteProduct", { id: S.cur.p.id }); closeAll(); loadProducts(); }, "Товар скрыт");
-        return tg?.showConfirm ? tg.showConfirm("Скрыть товар из каталога? История заказов сохранится.", (y) => y && go()) : (confirm("Скрыть товар из каталога?") && go());
+        return tg?.showConfirm ? tg.showConfirm("Скрыть товар из каталога? Его можно вернуть переключателем «Показывать в каталоге».", (y) => y && go()) : (confirm("Скрыть товар из каталога?") && go());
       }
       if (a === "saveUser") {
         const u = S.cur.u;

@@ -165,6 +165,13 @@
     .row:last-child { border-bottom: none; }
     .thumb { width: 72px; height: 72px; flex: none; border-radius: 10px; object-fit: cover; background: var(--bg2); }
     .thumb.noimg { font-size: 26px; }
+    video.preview { background: #000; }
+    .photo-replace { display: block; margin: 8px auto 0; color: var(--link); font-size: 13px; font-weight: 700; }
+    .photo-replace[hidden] { display: none; }
+    .video-thumb { position: relative; display: block; overflow: hidden; }
+    .video-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .video-thumb span { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-size: 20px; background: rgba(0,0,0,.28); }
+    .sku-note { display: block; margin: 14px 0 0; padding: 0; font-size: 11px; color: var(--hint); opacity: .75; letter-spacing: .02em; }
     .grow { flex: 1; min-width: 0; }
     .grow .name { font-size: 14px; margin: 0 0 4px; }
     .stepper { display: inline-flex; align-items: center; background: var(--bg2); border-radius: 10px; margin-top: 8px; }
@@ -383,16 +390,18 @@
   <section class="view" id="v-photo">
     <div class="top">
       <h1>Поиск по фото</h1>
-      <div class="sub">Пришлите фото или скриншот — найдём товар и посчитаем цену</div>
+      <div class="sub">Пришлите фото, скриншот или короткое видео — найдём товар и посчитаем цену</div>
     </div>
     <div class="section">
       <label class="drop" id="drop" for="photoInput">
         <div class="big">📷</div>
-        <div style="font-weight:600;margin-top:6px">Выбрать фото</div>
-        <div class="muted" style="margin-top:4px">Галерея или камера</div>
+        <div style="font-weight:600;margin-top:6px">Выбрать фото или видео</div>
+        <div class="muted" style="margin-top:4px">Галерея или камера · видео до 60 секунд</div>
       </label>
-      <input type="file" id="photoInput" accept="image/*" hidden>
+      <input type="file" id="photoInput" accept="image/*,video/*" hidden>
       <img class="preview" id="preview" alt="">
+      <video class="preview" id="previewVideo" controls playsinline muted preload="metadata"></video>
+      <button class="photo-replace" id="photoReplace" hidden>Выбрать другое фото или видео</button>
       <label for="photoComment">Комментарий (размер, цвет, количество)</label>
       <textarea id="photoComment" maxlength="500" placeholder="Например: размер M, чёрный, 2 шт"></textarea>
       <div style="height:12px"></div>
@@ -660,7 +669,7 @@
       profile: null, cart: [], wish: [], orders: null, requests: null,
       promo: null, payments: {}, payment: null, quote: null,
       view: store.get("ramp:view") === "list" ? "list" : "grid",
-      tab: "catalog", openProductId: null, photoData: null,
+      tab: "catalog", openProductId: null, photoData: null, photoVideo: null, photoVideoUrl: null,
     };
 
     const ACTIVE = ["new", "review", "paid", "bought", "shipping", "arrived"];
@@ -834,7 +843,7 @@
       $("psDelivery").textContent=RampCatalog.delivery(p);
       $("psPrice").textContent = fmt(p.price);
       $("psName").textContent = p.name;
-      $("psCat").textContent = [p.category,p.sku ? "Артикул: "+p.sku : ""].filter(Boolean).join(" · ");
+      $("psCat").textContent = p.category || "";
       $("psStock").textContent = p.in_stock ? "" : "Сейчас нет в наличии";
       state.productOpts = Object.fromEntries((p.options || []).filter(o => o.values.length===1).map(o=>[o.name,o.values[0].label]));
       $("psDesc").textContent = p.description || "";
@@ -843,6 +852,7 @@
       $("psSpecs").innerHTML = (p.specs?.length?detail('Характеристики',p.specs.map(x=>`<div class="spec-row"><span>${esc(x.name)}</span><span>${esc(x.value)}</span></div>`).join('')):'')+
         (p.composition?detail('Состав',`<p class="body-copy">${esc(p.composition)}</p>`):'')+(p.care?detail('Уход',`<p class="body-copy">${esc(p.care)}</p>`):'')+
         detail('Доставка',`<p class="body-copy">По Ташкенту — ориентировочно ${RampCatalog.delivery(p)}, курьером на ваш адрес. ${esc(p.delivery_note || '')}</p><p class="body-copy">Доставка в регионы — по согласованию с @ramphelper. Для отдельных товаров срок может достигать 21–24 дней.</p>`)+
+        (p.sku?`<button class="sku-note" data-copy-sku="${esc(p.sku)}" aria-label="Скопировать артикул ${esc(p.sku)}">Артикул ${esc(p.sku)}</button>`:'')+
         `<button class="btn secondary" data-product-reviews="${p.id}" style="margin-top:16px">Отзывы о товаре →</button>`;
       renderRelated(p);
       renderProductBar();
@@ -1227,30 +1237,80 @@
       });
     }
 
+    // Короткое видео (до 60 с и 50 МБ) уходит напрямую в хранилище, фото — сжатым снимком.
+    const REQUEST_VIDEO_TYPES = { "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm" };
+    const videoMime = (f) => f.type || (/\.mov$/i.test(f.name) ? "video/quicktime" : /\.mp4$/i.test(f.name) ? "video/mp4" : /\.webm$/i.test(f.name) ? "video/webm" : "");
+    function videoDuration(url) {
+      return new Promise((resolve) => {
+        const v = document.createElement("video");
+        let settled = false;
+        const done = (d) => { if (settled) return; settled = true; v.removeAttribute("src"); v.load(); resolve(d); };
+        v.preload = "metadata"; v.muted = true;
+        v.onloadedmetadata = () => done(v.duration);
+        v.onerror = () => done(NaN);
+        setTimeout(() => done(NaN), 4000);
+        v.src = url;
+      });
+    }
+    function resetPhotoPick() {
+      if (state.photoVideoUrl) URL.revokeObjectURL(state.photoVideoUrl);
+      state.photoData = null; state.photoVideo = null; state.photoVideoUrl = null;
+      $("photoInput").value = "";
+      $("preview").style.display = "none";
+      const v = $("previewVideo");
+      v.pause(); v.removeAttribute("src"); v.load(); v.style.display = "none";
+      $("photoReplace").hidden = true;
+      $("drop").style.display = "block";
+      $("photoSend").disabled = true;
+    }
+
     async function onPhotoPicked(e) {
       const file = e.target.files?.[0];
       if (!file) return;
       try {
-        state.photoData = await compressImage(file);
-        $("preview").src = state.photoData;
-        $("preview").style.display = "block";
+        const mime = videoMime(file);
+        if (mime.startsWith("video/")) {
+          if (!REQUEST_VIDEO_TYPES[mime]) throw new Error("Подойдёт видео MP4, MOV или WebM");
+          if (file.size > 50 * 1024 * 1024) throw new Error("Видео больше 50 МБ. Снимите короче — до 60 секунд");
+          const url = URL.createObjectURL(file);
+          if (await videoDuration(url) > 61) { URL.revokeObjectURL(url); throw new Error("Видео длиннее минуты. Нужен ролик до 60 секунд"); }
+          resetPhotoPick();
+          state.photoVideo = { file, mime }; state.photoVideoUrl = url;
+          $("previewVideo").src = url; $("previewVideo").style.display = "block";
+        } else {
+          const data = await compressImage(file);
+          resetPhotoPick();
+          state.photoData = data;
+          $("preview").src = data; $("preview").style.display = "block";
+        }
         $("drop").style.display = "none";
+        $("photoReplace").hidden = false;
         $("photoSend").disabled = false;
-      } catch (err) { toast(err.message); }
+      } catch (err) { $("photoInput").value = ""; toast(err.message); }
     }
 
     async function sendPhoto() {
-      if (!state.photoData) return;
+      if (!state.photoData && !state.photoVideo) return;
       const btn = $("photoSend");
-      btn.disabled = true; btn.textContent = "Отправляем…";
+      btn.disabled = true; btn.textContent = state.photoVideo && !state.photoVideo.path ? "Загружаем видео…" : "Отправляем…";
       try {
-        const { requests } = await api("photoRequest", { image: state.photoData, comment: $("photoComment").value.trim() });
+        const comment = $("photoComment").value.trim();
+        let payload = { image: state.photoData, comment };
+        if (state.photoVideo) {
+          const video = state.photoVideo;
+          if (!video.path) {
+            const up = await api("createRequestUpload", { mime: video.mime, size: video.file.size });
+            const res = await fetch(up.signed_url, { method: "PUT", headers: { "Content-Type": video.mime, "x-upsert": "false" }, body: video.file });
+            if (!res.ok) throw new Error("Не удалось загрузить видео. Проверьте интернет и повторите");
+            video.path = up.path; // повторная отправка не загружает видео заново
+            btn.textContent = "Отправляем…";
+          }
+          payload = { video_path: video.path, comment };
+        }
+        const { requests } = await api("photoRequest", payload);
         state.requests = requests;
-        state.photoData = null;
-        $("photoInput").value = "";
+        resetPhotoPick();
         $("photoComment").value = "";
-        $("preview").style.display = "none";
-        $("drop").style.display = "block";
         tg?.HapticFeedback?.notificationOccurred("success");
         toast("Заявка отправлена! Ответ придёт сюда и в чат с ботом");
         renderRequests();
@@ -1259,7 +1319,7 @@
         btn.disabled = false;
       } finally {
         btn.textContent = "Отправить на поиск";
-        if (!state.photoData) btn.disabled = true;
+        if (!state.photoData && !state.photoVideo) btn.disabled = true;
       }
     }
 
@@ -1276,7 +1336,7 @@
       const list = state.requests || [];
       $("photoList").innerHTML = list.length ? list.map((r) => `
         <div class="row">
-          ${imgTag(r.photo_url, "thumb")}
+          ${r.media_type === "video" ? (r.photo_url ? `<a class="thumb video-thumb" href="${esc(r.photo_url)}" target="_blank" rel="noopener" aria-label="Открыть видео"><video src="${esc(r.photo_url)}#t=0.1" muted playsinline preload="metadata"></video><span>▶</span></a>` : `<div class="thumb noimg">🎬</div>`) : imgTag(r.photo_url, "thumb")}
           <div class="grow">
             <div class="order-head">
               <b>Заявка №${r.id}</b>
@@ -1718,6 +1778,7 @@
 
     $("photoInput").addEventListener("change", onPhotoPicked);
     $("preview").addEventListener("click", () => $("photoInput").click());
+    $("photoReplace").addEventListener("click", () => $("photoInput").click());
     $("photoSend").addEventListener("click", sendPhoto);
 
     for (const id of ["viewToggle", "viewSeg"]) {
@@ -1743,6 +1804,7 @@
       });
     }
     document.body.addEventListener("click",e=>{
+      const sku=e.target.closest('[data-copy-sku]');if(sku)return copyText(sku.dataset.copySku);
       if(e.target.closest('[data-contact-support]')){const url=`https://t.me/${state.support || 'ramphelper'}`;return tg?.openTelegramLink?tg.openTelegramLink(url):window.open(url,'_blank','noopener');}
       if(e.target.closest('[data-retry-support]'))return showSupport();
       if(e.target.closest('[data-reset-filters]')){$("filterMin").value='';$("filterMax").value='';$("filterAvailable").checked=false;return;}

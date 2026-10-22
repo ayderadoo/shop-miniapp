@@ -11,14 +11,14 @@ begin
     select public_id,delivery_id into first_id,delivery from public.profiles where telegram_id=a;
     if delivery is null or (select delivery_id from public.client_identifiers where telegram_id=a)<>delivery then raise exception 'Delivery ID not registered'; end if;
     rejected:=false;
-    begin update public.profiles set delivery_id='RAMP-D0' where telegram_id=a; exception when raise_exception then rejected:=true; end;
+    begin update public.profiles set delivery_id='RP-0' where telegram_id=a; exception when raise_exception then rejected:=true; end;
     if not rejected then raise exception 'Delivery ID changed'; end if;
     update public.profiles set first_name='Покупатель QA' where telegram_id=a;
     if (select public_id from public.profiles where telegram_id=a)<>first_id then raise exception 'Profile ID changed'; end if;
 
-    insert into public.products(name,sku,price,active,in_stock) values('QA Артикул','QA-'||txid_current(),250000,true,true) returning id into product;
+    insert into public.products(name,sku,price,active,in_stock) values('QA Артикул','RM-'||(900000000+txid_current()%40000000),250000,true,true) returning id into product;
     rejected:=false;
-    begin insert into public.products(name,sku,price) values('QA Дубль','qa-'||txid_current(),1); exception when unique_violation then rejected:=true; end;
+    begin insert into public.products(name,sku,price) values('QA Дубль','RM-'||(900000000+txid_current()%40000000),1); exception when unique_violation then rejected:=true; end;
     if not rejected then raise exception 'Duplicate SKU accepted'; end if;
     insert into public.cart_items(telegram_id,product_id,qty) values(a,product,2),(b,product,1);
     update public.settings set value='{"card":"Карта"}' where key='payments';
@@ -29,9 +29,9 @@ begin
     if not rejected then raise exception 'Foreign phone accepted'; end if;
     result:=public.ramp_create_order(a,gen_random_uuid(),'{"full_name":"Тест Клиент","phone":"+998901234567","city":"Ташкент","address":"Улица Тестовая","payment_method":"card"}');
     order_id:=(result->'order'->>'id')::bigint;
-    if result->'order'->>'delivery_id'<>delivery or result->'order'->'items'->0->>'sku'<>'QA-'||txid_current() then raise exception 'SKU or delivery snapshot missing'; end if;
-    update public.products set sku='QA-NEW-'||txid_current() where id=product;
-    if (select items->0->>'sku' from public.orders where id=order_id)<>'QA-'||txid_current() then raise exception 'Historical SKU changed'; end if;
+    if result->'order'->>'delivery_id'<>delivery or result->'order'->'items'->0->>'sku'<>'RM-'||(900000000+txid_current()%40000000) then raise exception 'SKU or delivery snapshot missing'; end if;
+    update public.products set sku='RM-'||(950000000+txid_current()%40000000) where id=product;
+    if (select items->0->>'sku' from public.orders where id=order_id)<>'RM-'||(900000000+txid_current()%40000000) then raise exception 'Historical SKU changed'; end if;
     if (select qty from public.order_procurement where id=order_id)<>2 then raise exception 'Procurement export failed'; end if;
 
     rejected:=false;

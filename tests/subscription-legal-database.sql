@@ -6,7 +6,7 @@ begin
   select telegram_id into adm from public.admins order by telegram_id limit 1;
   insert into public.profiles(telegram_id,tg_phone) values(a,'+998901234567');
   if (select subscription_verified_at from public.profiles where telegram_id=a) is not null then raise exception 'New profile already subscribed'; end if;
-  insert into public.products(name,sku,price) values('QA V3','QA-V3-'||txid_current(),1000) returning id into p;
+  insert into public.products(name,sku,price) values('QA V3','RM-'||(990000000+txid_current()%9000000),1000) returning id into p;
   r:=public.ramp_save_store_review(adm,null,p,'Автор',5,'Отзыв с площадки',true,'[]','Pinduoduo','https://example.com/item');
   row_id:=(r->>'id')::bigint;
   if r->>'origin_name'<>'Pinduoduo' or r->>'status'<>'approved' or (r->>'verified_purchase')::boolean then raise exception 'Attribution/publication incorrect'; end if;

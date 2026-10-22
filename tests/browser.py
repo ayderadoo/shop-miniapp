@@ -13,7 +13,7 @@ STATUS = dict(new='Ждёт оплаты',review='Чек на проверке',
 PRODUCTS = [dict(id=1,name='Настольная лампа',category='Дом',price=125000,photo='img/lamp.jpg',description='Тёплый свет для уютных вечеров.',in_stock=True,active=True,options=[],specs=[]),
  dict(id=2,name='Худи оверсайз',category='Одежда',price=89000,photo='img/hoodie.jpg',description='Мягкий хлопок, свободная посадка.',in_stock=True,active=True,options=[dict(name='Размер',values=[dict(label='M',add=0),dict(label='XL',add=10000)])],specs=[dict(name='Материал',value='Хлопок')]),
  dict(id=3,name='Беспроводные наушники',category='Гаджеты',price=210000,photo='img/headphones.jpg',description='Музыка с вами каждый день.',in_stock=True,active=True,options=[],specs=[])]
-PROFILE=dict(telegram_id=101,public_id='RAMP-100101',delivery_id='RAMP-D000001',phone_verified=True,subscription_verified=True,user_no=1,first_name='Азиз',last_name='Каримов',username='qa_user',full_name='Каримов Азиз',tg_phone='+998901234567',phone='+998901234567',city='Ташкент',address='Улица Тестовая, дом 1',catalog_view='grid',created_at='2026-10-20T00:00:00Z',blocked=False)
+PROFILE=dict(telegram_id=101,public_id='RAMP-100101',delivery_id='RP-1',phone_verified=True,subscription_verified=True,user_no=1,first_name='Азиз',last_name='Каримов',username='qa_user',full_name='Каримов Азиз',tg_phone='+998901234567',phone='+998901234567',city='Ташкент',address='Улица Тестовая, дом 1',catalog_view='grid',created_at='2026-10-20T00:00:00Z',blocked=False)
 RULES=dict(welcomePct=10,welcomeDays=30,inviterPct=33,inviteeNextPct=11,minQualifyingOrder=200000)
 PROMO=dict(current=dict(pct=10,reason='Приветственная скидка'),welcome=dict(active=True,pct=10,until='2026-11-20T00:00:00Z'),coupons=[],invited=0,ref_link='https://t.me/ramp_uzbot?start=invite_00112233445566778899aabbccddeeff',can_enter_ref=True,referred=False,ref_rewarded=False,rules=RULES)
 TG="""window.Telegram={WebApp:{initData:'isolated-qa',initDataUnsafe:{user:{id:101,first_name:'Азиз',last_name:'Каримов'}},colorScheme:'light',ready(){},expand(){},onEvent(){},setHeaderColor(){},setBackgroundColor(){},setBottomBarColor(){},BackButton:{show(){},hide(){},onClick(){}},HapticFeedback:{impactOccurred(){},notificationOccurred(){}},showConfirm(t,cb){cb(true)},requestContact(cb){window.qaContact=true;cb(true)}}};"""
@@ -21,7 +21,7 @@ TG="""window.Telegram={WebApp:{initData:'isolated-qa',initDataUnsafe:{user:{id:1
 class Fixture:
  def __init__(self):
   self.profile=copy.deepcopy(PROFILE);self.cart=[];self.orders=[];self.products=copy.deepcopy(PRODUCTS);self.saved_product=None
-  for product in self.products:product['sku']='TEST-'+str(product['id'])
+  for product in self.products:product['sku']='RM-'+str(599999+product['id'])
  def route(self,route):
   req=route.request
   if req.method=='OPTIONS':return route.fulfill(status=204,headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*'})
@@ -81,7 +81,7 @@ def main():
   page.locator('#toCheckout').click();expect(page.locator('#coSubmit')).to_be_enabled();page.locator('#coSubmit').click()
   expect(page.locator('#ordersBox')).to_contain_text('Заказ №1')
   assert len(fixture.orders)==1 and fixture.orders[0]['items'][0]['qty']==3
-  page.locator('.tab[data-tab="profile"]').click();expect(page.locator('#deliveryId')).to_have_text('RAMP-D000001');page.screenshot(path=str(OUT/'shop-profile.png'),full_page=True,animations="disabled")
+  page.locator('.tab[data-tab="profile"]').click();expect(page.locator('#deliveryId')).to_have_text('RP-1');page.screenshot(path=str(OUT/'shop-profile.png'),full_page=True,animations="disabled")
   page.set_viewport_size({'width':320,'height':740});assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'),'Shop horizontal overflow'
   page.goto(BASE_URL+'/admin.html',wait_until='networkidle');expect(page.locator('#oList .card')).to_have_count(1)
   page.set_viewport_size({'width':1280,'height':850});page.screenshot(path=str(OUT/'admin-desktop.png'),full_page=True,animations="disabled")
@@ -94,7 +94,7 @@ def main():
   with page.expect_download() as d:page.locator('#exportAll').click()
   d.value.save_as(str(OUT/'export-check.xlsx'))
   from openpyxl import load_workbook
-  book=load_workbook(OUT/'export-check.xlsx');assert book.sheetnames==['Заказы','Клиенты','Товары','Заявки','Купоны','Реестр ID','Закупка','Истории','Отзывы'];headers=[cell.value for cell in book['Клиенты'][1]];assert book['Клиенты'].cell(2,headers.index('Личный ID')+1).value=='RAMP-D000001'
+  book=load_workbook(OUT/'export-check.xlsx');assert book.sheetnames==['Заказы','Клиенты','Товары','Заявки','Купоны','Реестр ID','Закупка','Истории','Отзывы','FAQ'];headers=[cell.value for cell in book['Клиенты'][1]];assert book['Клиенты'].cell(2,headers.index('Личный ID')+1).value=='RP-1'
   with page.expect_download() as d:page.locator('[data-act="exportCsv"]').click()
   d.value.save_as(str(OUT/'export-check.csv'));assert (OUT/'export-check.csv').read_bytes().startswith(b'\xef\xbb\xbf')
   page.set_viewport_size({'width':390,'height':844});page.locator('[data-tab="products"]').click();page.screenshot(path=str(OUT/'admin-mobile.png'),full_page=True,animations="disabled")

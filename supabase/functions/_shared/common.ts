@@ -230,13 +230,19 @@ export function receiptKeyboard(orderId: number) {
   };
 }
 
-// Отправить уведомление всем админам и запомнить сообщения, чтобы ответ свайпом дошёл до клиента
+// Отправить уведомление всем админам и запомнить сообщения, чтобы ответ свайпом дошёл до клиента.
+// fallbacks — запасные способы, если Telegram не принял первый (например, не смог забрать видео по ссылке).
 export async function notifyAdmins(
   kind: "order" | "photo" | "receipt", refId: number, method: string, payload: Record<string, unknown>,
+  fallbacks: [string, Record<string, unknown>][] = [],
 ) {
   const { admins } = await cfg();
   await Promise.all(admins.map(async (chat_id) => {
-    const sent = await tg(method, { ...payload, chat_id }, "admin");
+    let sent = await tg(method, { ...payload, chat_id }, "admin");
+    for (const [next, body] of fallbacks) {
+      if (sent.ok) break;
+      sent = await tg(next, { ...body, chat_id }, "admin");
+    }
     if (sent.ok) {
       await sb.from("admin_messages").insert({ chat_id, message_id: sent.result.message_id, kind, ref_id: refId });
     }

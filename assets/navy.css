@@ -155,3 +155,15 @@ body.legal-only #infoSheet { transform:none; visibility:visible; pointer-events:
 :root[data-theme="dark"] {--outline:#496B9E;}
 :root[data-theme="dark"] .tab.active {color:#BDD6FF;background:#14243B;}
 :root[data-theme="dark"] .tab.active::before {background:#8FB5F2;}
+/* Каталог: категории плавно уходят под край и не упираются в переключатель вида */
+.catalog-bar {gap:10px;}
+.catalog-bar .chips {padding-top:6px;padding-bottom:6px;-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 34px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 34px),transparent);}
+.catalog-bar .chips::after {content:'';flex:0 0 26px;}
+/* Кнопка темы — ровный круг вровень с «Наш канал» */
+.hero-top .theme-toggle,.hero-top .channel-link {height:38px;box-sizing:border-box;}
+.hero-top .theme-toggle {width:38px;border-radius:999px;padding:0;}
+.hero-top .theme-toggle svg {width:20px;height:20px;}
+@media(max-width:359px){.hero-top .theme-toggle,.hero-top .channel-link{height:34px}.hero-top .theme-toggle{width:34px}}
+.admin .head-actions {align-items:center;}
+.admin .head-actions .theme-toggle {width:38px;height:38px;padding:0;}
+.admin .head-actions .theme-toggle svg {width:20px;height:20px;}
