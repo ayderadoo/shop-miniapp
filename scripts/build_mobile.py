@@ -17,9 +17,9 @@ def main():
  ui=ui.replace("img.src = 'img/placeholder.svg';",'const name=new URL(img.src,location.href).pathname.split("/").pop();\n    if(embeddedPhotos[name])img.classList.remove("image-fallback");\n    img.src=embeddedPhotos[name] || '+json.dumps(uri(root/'img/placeholder.svg','image/svg+xml'))+';')
  for page in ['index.html','admin.html']:
   html=(root/page).read_text().replace('<link rel="stylesheet" href="assets/fonts.css">','<style>'+css+'</style>')
-  for name in ['ui.css','navy.css','stories.css']:
+  for name in ['ui.css','navy.css','stories.css','catalog.css']:
    html=html.replace(f'<link rel="stylesheet" href="assets/{name}">','<style>'+(root/'assets'/name).read_text()+'</style>')
-  for name in ['ui.js','export.js','content-ui.js','theme.js','wishlist.js','stories.js']:
+  for name in ['ui.js','export.js','content-ui.js','theme.js','wishlist.js','stories.js','catalog.js']:
    source=(ui if name=='ui.js' else (root/'assets'/name).read_text()).replace('</script','<\\/script')
    html=html.replace(f'<script src="assets/{name}" defer></script>',"<script>document.addEventListener('DOMContentLoaded',()=>{\n"+source+'\n});</script>')
    html=html.replace(f'<script src="assets/{name}"></script>','<script>\n'+source+'\n</script>')

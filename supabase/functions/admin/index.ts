@@ -4,6 +4,7 @@ import {
   STATUS, tg, setupBots, SHOP_USERNAME, type TgUser, verifyInitData,
 } from "../_shared/common.ts";
 import { normalizeOptions, normalizeSku } from "../_shared/validation.ts";
+import { catalogFields } from "../_shared/catalog.ts";
 
 import { adminContent, ContentError } from "../_shared/content.ts";
 import { channelStatus } from "../_shared/subscription.ts";
@@ -126,6 +127,9 @@ async function handle(action: string, b: any, me: TgUser) {
     case "products":
       return { products: check(await sb.from("products").select("*").order("id", { ascending: false })) };
 
+    case "uploadProductPhoto":
+      return { url: await uploadImage(String(b.image ?? ""), "catalog") };
+
     case "saveProduct": {
       const row: Record<string, unknown> = {
         name: str(b.name, 200),
@@ -145,12 +149,16 @@ async function handle(action: string, b: any, me: TgUser) {
         if (!Array.isArray(b.specs) || b.specs.length>30) throw new HttpError(400,"Не больше 30 характеристик");
         row.specs = b.specs.map((x: any) => ({ name:str(x.name,100), value:str(x.value,300) })).filter((x: any)=>x.name && x.value);
       }
+      try { Object.assign(row, catalogFields(b)); } catch(e) { throw new HttpError(400,(e as Error).message); }
       if (b.photo && !/^https:\/\//i.test(String(b.photo))) throw new HttpError(400,"Фото должно быть HTTPS-ссылкой");
-      if (b.image) row.photo = await uploadImage(String(b.image), "catalog");
-      else if (b.photo !== undefined) row.photo = str(b.photo, 1000) || null;
-      const res = b.id
-        ? await sb.from("products").update(row).eq("id", int(b.id)).select().single()
-        : await sb.from("products").insert(row).select().single();
+      if (b.image || (b.photos===undefined && b.photo!==undefined)) {
+        const photo=b.image ? await uploadImage(String(b.image),"catalog") : str(b.photo,2000) || null;
+        const previous=b.id ? check(await sb.from("products").select("photos").eq("id",int(b.id)).single()) : null;
+        row.photo=photo; row.photos=photo ? [photo,...(previous?.photos ?? []).slice(1)] : [];
+      }
+      const res=await sb.rpc("ramp_save_catalog_product",{p_uid:me.id,p_id:b.id ? int(b.id) : null,p_data:row});
+      if(res.error?.code==="P0001")throw new HttpError(400,res.error.message);
+      if(res.error?.code==="23505")throw new HttpError(400,"Товар с таким артикулом уже есть");
       return { product: check(res) };
     }
 
@@ -290,11 +298,11 @@ async function handle(action: string, b: any, me: TgUser) {
     }
 
     case "exportData": {
-      const tables: Record<string,string>={identifiers:"telegram_id,delivery_id,issued_at",procurement:"id,delivery_id,status,sku,name,variant,qty,unit_price,total",news:"id,title,body,published,published_at,expires_at,duration_hours,created_at",reviews:"id,product_id,author_name,rating,body,source,origin_name,origin_url,status,created_at",orders:ORDER_COLS,users:PROFILE_COLS,products:"id,sku,name,category,price,photo,description,active,in_stock,options,specs",requests:"id,telegram_id,comment,status,answer,created_at,answered_at",coupons:"id,telegram_id,pct,reason,source_order_id,used_order_id,created_at"};
+      const tables: Record<string,string>={identifiers:"telegram_id,delivery_id,issued_at",procurement:"id,delivery_id,status,sku,name,variant,qty,unit_price,total",news:"id,title,body,published,published_at,expires_at,duration_hours,created_at",reviews:"id,product_id,author_name,rating,body,source,origin_name,origin_url,status,created_at",orders:ORDER_COLS,users:PROFILE_COLS,products:"id,sku,name,category,price,photo,photos,description,active,in_stock,options,specs,composition,care,delivery_min_days,delivery_max_days,delivery_note,related_ids",faq:"id,question,answer,published,position,created_at,updated_at",requests:"id,telegram_id,comment,status,answer,created_at,answered_at",coupons:"id,telegram_id,pct,reason,source_order_id,used_order_id,created_at"};
       const entity=String(b.entity);
       if (!tables[entity]) throw new HttpError(400,"Неизвестный раздел для экспорта");
       const offset=Math.max(0,int(b.offset ?? 0));
-      const table=({users:"profiles",requests:"photo_requests",identifiers:"client_identifiers",procurement:"order_procurement",news:"shop_news",reviews:"product_reviews"} as Record<string,string>)[entity] || entity;
+      const table=({users:"profiles",requests:"photo_requests",identifiers:"client_identifiers",procurement:"order_procurement",news:"shop_news",reviews:"product_reviews",faq:"shop_faq"} as Record<string,string>)[entity] || entity;
       const key=["users","identifiers"].includes(entity) ? "telegram_id" : "id";
       const rows=check(await sb.from(table).select(tables[entity]).order(key).range(offset,offset+499));
       return {rows,next_offset:rows.length===500 ? offset+500 : null};

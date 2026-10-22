@@ -39,7 +39,7 @@ function check<T>(res: { data: T; error: unknown }): T {
   return res.data;
 }
 
-const PRODUCT_COLS = "id,name,category,price,photo,description,active,in_stock,options,specs,sku";
+const PRODUCT_COLS = "id,name,category,price,photo,photos,description,active,in_stock,options,specs,sku,composition,care,delivery_min_days,delivery_max_days,delivery_note,related_ids,created_at";
 const PROFILE_COLS =
   "telegram_id,first_name,last_name,username,full_name,phone,tg_phone,city,address," +
   "referred_by,ref_rewarded,catalog_view,user_no,delivery_id,phone_verified_at,subscription_verified_at,subscription_channel,created_at";
@@ -173,6 +173,8 @@ async function handle(action: string, body: any, user: TgUser) {
   if(contentResult!==undefined)return contentResult;
 
   switch (action) {
+    case "catalogInfo":
+      return { ranking: check(await sb.rpc("ramp_catalog_ranking")) };
     case "me": {
       // Без upsert: номера клиентов (user_no) идут подряд, без пропусков
       const names = { first_name: user.first_name ?? null, last_name: user.last_name ?? null, username: user.username ?? null };

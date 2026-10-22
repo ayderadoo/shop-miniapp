@@ -14,7 +14,7 @@ function check(result: any){
 }
 const MIME: Record<string,string>={"image/jpeg":"jpg","image/png":"png","image/webp":"webp","video/mp4":"mp4","video/webm":"webm","video/quicktime":"mov"};
 
-async function createUpload(uid: number,scope: "review"|"news",body: any){
+async function createUpload(uid: number,scope: "review"|"news"|"faq",body: any){
   const mime=String(body.mime??""),size=Number(body.size),ext=MIME[mime];
   if(!ext||!Number.isSafeInteger(size)||size<1||size>(mime.startsWith("image/")?5:25)*1024*1024)throw new ContentError(400,"Фото — до 5 МБ, видео MP4/MOV/WebM — до 25 МБ");
   const count=await sb.from("content_uploads").select("id",{count:"exact",head:true}).eq("telegram_id",uid).gte("created_at",new Date(Date.now()-3600_000).toISOString());
@@ -46,6 +46,10 @@ export async function legalDocument(slug: unknown) {
 }
 
 export async function customerContent(action: string,b: any,user: TgUser){
+  if(action==="faq") {
+    const rows=check(await sb.from("shop_faq").select("id,question,answer,media,position,updated_at").eq("published",true).order("position").order("id").range(offset(b.offset),offset(b.offset)+49));
+    return {faq:await present(rows),has_more:rows.length===50};
+  }
   if(action==="createMediaUpload")return createUpload(user.id,"review",b);
   if(action==="stories"||action==="news"){
     const rows=check(await sb.rpc("ramp_live_stories",{p_offset:offset(b.offset)}));
@@ -73,6 +77,19 @@ export async function customerContent(action: string,b: any,user: TgUser){
 }
 
 export async function adminContent(action: string,b: any,user: TgUser){
+  if(action==="faq") {
+    let q=sb.from("shop_faq").select("*").order("position").order("id").range(offset(b.offset),offset(b.offset)+49);
+    if(b.filter==="published")q=q.eq("published",true);
+    if(b.filter==="draft")q=q.eq("published",false);
+    const rows=check(await q);return {faq:await present(rows,true),has_more:rows.length===50};
+  }
+  if(action==="saveFaq") {
+    const position=Number(b.position ?? 0);
+    if(!Number.isSafeInteger(position)||Math.abs(position)>10000)throw new ContentError(400,"Порядок — от −10000 до 10000");
+    const item=check(await sb.rpc("ramp_save_faq",{p_uid:user.id,p_id:optionalId(b.id),p_question:text(b.question,200),p_answer:text(b.answer,6000),p_published:b.published===true,p_position:position,p_media:mediaIds(b.media ?? [])}));
+    return {faq:(await present([item],true))[0]};
+  }
+  if(action==="deleteFaq"){check(await sb.from("shop_faq").delete().eq("id",id(b.id)));return {ok:true};}
   if(action==="stories") {
     let q=sb.from("shop_news").select("*").order("created_at",{ascending:false}).order("id",{ascending:false}).range(offset(b.offset),offset(b.offset)+49);
     const now=new Date().toISOString();
@@ -97,7 +114,7 @@ export async function adminContent(action: string,b: any,user: TgUser){
     if(!saved)throw new ContentError(409,"Документ уже изменён. Откройте актуальную редакцию и повторите");
     return {document:saved};
   }
-  if(action==="createMediaUpload")return createUpload(user.id,b.scope==="news"?"news":"review",b);
+  if(action==="createMediaUpload")return createUpload(user.id,b.scope==="news"?"news":b.scope==="faq"?"faq":"review",b);
   if(action==="news"){
     let query=sb.from("shop_news").select("*").order("pinned",{ascending:false}).order("position").order("created_at",{ascending:false}).range(offset(b.offset),offset(b.offset)+49);
     if(b.filter==="draft")query=query.eq("published",false);
