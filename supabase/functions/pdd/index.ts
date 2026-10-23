@@ -1,7 +1,6 @@
 // Вебхук бота-импортёра Пиндодо. Ключи PDD_BOT_TOKEN, TMAPI_KEY, GEMINI_API_KEY: env (если задан) или закрытая таблица pdd_bot_secrets.
 // Деплой: supabase functions deploy pdd --project-ref wtfeujuyklteisnrqksl --no-verify-jwt
 import { createBot, DEFAULT_SETTINGS, type ItemRow, type Settings, type Store, webhookSecret } from "./core.ts";
-import { brandPhoto } from "./photo.ts";
 
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
 
@@ -67,7 +66,8 @@ async function getBot() {
     geminiModels: models("GEMINI_MODELS"),
     visionModels: models("GEMINI_VISION_MODELS"),
     imageModels: models("GEMINI_IMAGE_MODELS"),
-    makePhoto: brandPhoto,
+    // Модуль картинок грузится только при сборке фото: если он сломается, бот всё равно работает
+    makePhoto: async (shot, box) => (await import("./photo.ts")).brandPhoto(shot, box),
     store,
     log: (...a) => console.log(...a),
   });

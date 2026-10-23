@@ -1,5 +1,5 @@
 // Фото товара в стиле RAMP из скриншота: вырезаем товар по рамке от Gemini и кладём на фирменный фон.
-import { Image } from "npm:imagescript@1.3.1";
+import { Image } from "https://deno.land/x/imagescript@1.3.0/mod.ts";
 
 // Белый логотип RAMP (Dela Gothic One, наклон −10°), лежит в репозитории: img/ramp-logo-white.png
 const LOGO_URL = "https://shop-miniapp-two.vercel.app/img/ramp-logo-white.png";
