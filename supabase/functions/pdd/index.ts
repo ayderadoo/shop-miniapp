@@ -13,7 +13,8 @@ async function rest(path: string, init: RequestInit = {}) {
     headers: { apikey: SB_KEY, authorization: `Bearer ${SB_KEY}`, "content-type": "application/json", ...(init.headers || {}) },
   });
   if (!res.ok) throw new Error(`db ${path}: ${res.status} ${await res.text()}`);
-  return res.status === 204 ? null : res.json();
+  const text = await res.text(); // return=minimal отвечает 201 с пустым телом
+  return text ? JSON.parse(text) : null;
 }
 
 const store: Store = {
