@@ -29,7 +29,7 @@ export type Deps = {
   log?: (...a: unknown[]) => void;
 };
 
-export const GEMINI_MODELS = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-flash-lite-latest"];
+export const GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash"];
 const ITEM_TTL_MS = 6 * 3600_000;
 const RATE_TTL_MS = 6 * 3600_000;
 const MAX_VARIANT_LINES = 40;
