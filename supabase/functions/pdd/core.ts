@@ -338,9 +338,10 @@ export async function readShots(images: { mime: string; data: string }[], apiKey
   return null;
 }
 
-const PHOTO_PROMPT = `Product photo for the online shop RAMP. Take the product shown in the screenshots and create a clean e-commerce photo of exactly this product: same shape, colors, materials and details; do not invent or change the product.
-Style: soft studio light, light background #F3F5FB with a subtle diagonal accent in azure #2B3FD6 and turquoise #19C3C9, gentle shadow, product centered, square.
-Strictly no text, no Chinese characters, no marketplace logos, no prices, no stickers, no people, no phone interface.`;
+const PHOTO_PROMPT = `Product photo for the online shop RAMP. Take ONLY the product itself from the screenshots and render exactly this product: same shape, colors, materials, proportions and details; do not invent, add or change anything on the product.
+Composition: square image, pure white background (#FFFFFF), the product centered and large, soft natural shadow under it.
+Brand outline: a clean, even outline around the product silhouette in azure blue #2B3FD6 (about 6–8 px, smooth, like a sticker contour), optionally a very subtle turquoise #19C3C9 glow outside the blue outline.
+Strictly NO text, NO letters, NO Chinese characters, NO logos or watermarks of the marketplace, NO prices, NO stickers, NO badges, NO people or hands, NO phone interface, NO other objects.`;
 let imageOffUntil = 0;
 
 // Рисует фото через Gemini (нужен платный тариф). На бесплатном ключе лимит 0 — тогда час не пробуем и берём вырезку.
