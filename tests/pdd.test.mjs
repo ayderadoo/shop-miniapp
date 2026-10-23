@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { findRefs, resolveGoodsId, fetchItem, priceUzs, parseSkus, renderCard, createBot, DEFAULT_SETTINGS, UserError } from '../supabase/functions/pdd/core.ts';
+import { findRefs, resolveGoodsId, fetchItem, priceUzs, parseSkus, renderCard, createBot, shotToItem, bytesToBase64, DEFAULT_SETTINGS, UserError } from '../supabase/functions/pdd/core.ts';
 
 const item = JSON.parse(readFileSync(new URL('./fixtures/tmapi_pdd_item.json', import.meta.url))).data;
 const rates = { cny: 1780, usd: 12000, source: 'тест' };
@@ -52,29 +52,39 @@ test('card shows translated grouped variants and prices; works without AI', () =
  assert.match(plain, /日本质造电刨/);
 });
 
+const SHOT_CARD = { title_cn: '男士运动鞋', title: 'Кроссовки мужские', description: 'd', category: 'Обувь', specs: [{ name: 'Подошва', value: 'ЭВА' }], variant_dim: 'Цвет',
+ variants: [{ name: 'Чёрный', yuan: 39.9, available: true }, { name: 'Серо-голубой', yuan: 45.9, available: true }, { name: 'Хаки', yuan: 0, available: false }],
+ options: [{ name: 'Размер', values: ['39', '40', '41'] }], china_shipping_yuan: 0, weight_kg: 0.8, notes: ['Маломерят'], missing: '' };
+
 function harness() {
- const sent = [], items = {}; let settings = {};
+ const sent = [], items = {}; let settings = {}, shots = [];
  const store = {
   getSettings: async () => ({ ...DEFAULT_SETTINGS, ...settings }), saveSettings: async s => { settings = structuredClone(s); },
   getItem: async id => items[id] ? structuredClone(items[id]) : null, saveItem: async r => { items[r.goods_id] = structuredClone(r); },
+  addShot: async sh => { shots.push(sh); },
+  takeShots: async (chat, mid) => { const mine = shots.filter(x => x.chat_id === chat); if (!mine.length || mine.at(-1).message_id !== mid) return null; shots = shots.filter(x => x.chat_id !== chat); return mine; },
  };
+ const visionBodies = [];
  let tmapiCalls = 0;
  const f = async (url, init = {}) => {
   url = String(url);
+  if (url.startsWith('https://api.telegram.org/file/')) return new Response(new Uint8Array([1, 2, 3]));
   if (url.startsWith('https://api.telegram.org/')) {
    const method = url.split('/').pop(); const body = JSON.parse(init.body);
    sent.push({ method, ...body });
+   if (method === 'getFile') return json({ ok: true, result: { file_path: `photos/${body.file_id}.jpg` } });
    return json({ ok: true, result: { message_id: sent.length } });
   }
   if (url.includes('yangkeduo.com')) return new Response('', { status: 307, headers: { location: 'https://mobile.yangkeduo.com/goods2.html?goods_id=99215544343' } });
   if (url.includes('api.tmapi.top')) { tmapiCalls++; return json({ code: 200, data: item }); }
+  if (url.includes('generativelanguage') && init.body.includes('inline_data')) { visionBodies.push(JSON.parse(init.body)); return json({ candidates: [{ content: { parts: [{ text: JSON.stringify(SHOT_CARD) }] } }] }); }
   if (url.includes('generativelanguage')) return json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ title: 'Рубанок', description: 'd', category: 'c', specs: [], dims: [], values: [], weight_kg: 2, notes: [] }) }] } }] });
   if (url.includes('cbu.uz')) return json([{ Rate: url.includes('CNY') ? '1780.00' : '12000.00', Date: '23.10.2026' }]);
   throw new Error('unexpected ' + url);
  };
- const bot = createBot({ token: 'T', tmapiKey: 'k', geminiKey: 'g', store, fetch: f });
+ const bot = createBot({ token: 'T', tmapiKey: 'k', geminiKey: 'g', store, fetch: f, shotWaitMs: 20 });
  const msg = (id, text, extra = {}) => bot.handleUpdate({ message: { message_id: 1, from: { id }, chat: { id, type: 'private' }, text, ...extra } });
- return { bot, sent, items, msg, get settings() { return settings; }, get tmapiCalls() { return tmapiCalls; } };
+ return { bot, sent, items, msg, visionBodies, get settings() { return settings; }, get tmapiCalls() { return tmapiCalls; } };
 }
 
 test('bot: first /start claims ownership, strangers are refused', async () => {
@@ -108,4 +118,33 @@ test('bot: link → photos + card; settings commands; weight reply edits the car
  await h.bot.handleUpdate({ callback_query: { id: 'c', from: { id: 5 }, data: 're:99215544343', message: { message_id: 42, chat: { id: 5 } } } });
  await h.msg(5, 'https://mobile.yangkeduo.com/goods.html?goods_id=99215544343');
  assert.equal(h.tmapiCalls, 1);
+});
+
+test('screenshots: variants keep prices, sold-out goes to notes, sizes to specs', () => {
+ const { raw, ai } = shotToItem(SHOT_CARD);
+ assert.equal(raw.source, 'screenshot');
+ assert.deepEqual(parseSkus(raw).skus.map(k => k.yuan), [39.9, 45.9]);
+ assert.ok(ai.notes.includes('Нет в наличии: Хаки'));
+ assert.deepEqual(ai.specs.at(-1), { name: 'Размер', value: '39, 40, 41' });
+ assert.equal(bytesToBase64(new Uint8Array([104, 105])), 'aGk=');
+});
+
+test('bot: album of screenshots → one recognition call → one priced card', async () => {
+ const h = harness();
+ await h.msg(5, '/start');
+ const photo = (mid, id, extra = {}) => h.bot.handleUpdate({ message: { message_id: mid, from: { id: 5 }, chat: { id: 5, type: 'private' }, media_group_id: 'g', photo: [{ file_id: id + 's' }, { file_id: id }], ...extra } });
+ await Promise.all([photo(10, 'a', { caption: 'https://mobile.yangkeduo.com/goods.html?goods_id=1011098534168' }), photo(11, 'b')]);
+ assert.equal(h.visionBodies.length, 1);
+ assert.equal(h.visionBodies[0].contents[0].parts.filter(p => p.inline_data).length, 2);
+ assert.ok(h.sent.some(m => m.method === 'getFile' && m.file_id === 'a'), 'largest photo size is used');
+ const card = h.sent.findLast(m => m.method === 'sendMessage');
+ assert.match(card.text, /<b>Кроссовки мужские<\/b>/);
+ assert.match(card.text, /• Чёрный — <b>[\d ]+<\/b> <i>\(¥39\.9\)<\/i>/);
+ assert.match(card.text, /Нет в наличии: Хаки/);
+ assert.match(card.text, /со скриншотов/);
+ const id = card.text.match(/ID карточки: <code>(\d+)<\/code>/)[1];
+ assert.equal(card.reply_markup.inline_keyboard[1][0].url, 'https://mobile.yangkeduo.com/goods.html?goods_id=1011098534168');
+ await h.msg(5, 'вес 2', { reply_to_message: { message_id: 50, text: card.text.replace(/<[^>]+>/g, '') } });
+ assert.equal(h.items[id].weight_kg, 2);
+ assert.ok(!h.sent.some(m => m.method === 'sendMediaGroup'));
 });

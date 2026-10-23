@@ -1,7 +1,7 @@
 // Локальный запуск бота-импортёра без сервера (long polling), данные — в JSON-файле.
 // PDD_BOT_TOKEN=... TMAPI_KEY=... GEMINI_API_KEY=... node scripts/pdd_bot_local.ts [store.json]
 import { readFileSync, writeFileSync } from "node:fs";
-import { createBot, DEFAULT_SETTINGS, type Store } from "../supabase/functions/pdd/core.ts";
+import { createBot, DEFAULT_SETTINGS, type Shot, type Store } from "../supabase/functions/pdd/core.ts";
 
 const file = process.argv[2] || "pdd-bot-store.json";
 const token = process.env.PDD_BOT_TOKEN || "";
@@ -10,12 +10,20 @@ if (!token) throw new Error("PDD_BOT_TOKEN не задан");
 let db: { settings: any; items: Record<string, any> } = { settings: {}, items: {} };
 try { db = JSON.parse(readFileSync(file, "utf8")); } catch { /* новый файл */ }
 const flush = () => writeFileSync(file, JSON.stringify(db));
+let shots: (Shot & { at: number })[] = [];
 
 const store: Store = {
   getSettings: async () => ({ ...DEFAULT_SETTINGS, ...db.settings }),
   saveSettings: async (s) => { db.settings = s; flush(); },
   getItem: async (id) => db.items[id] ? structuredClone(db.items[id]) : null,
   saveItem: async (row) => { db.items[row.goods_id] = row; flush(); },
+  addShot: async (shot) => { shots.push({ ...shot, at: Date.now() }); },
+  takeShots: async (chatId, messageId) => {
+    const mine = shots.filter(x => x.chat_id === chatId && Date.now() - x.at < 600_000);
+    if (!mine.length || mine.at(-1)!.message_id !== messageId) return null;
+    shots = shots.filter(x => !mine.includes(x));
+    return mine;
+  },
 };
 
 const bot = createBot({

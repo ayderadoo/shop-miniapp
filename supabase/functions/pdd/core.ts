@@ -13,23 +13,33 @@ export type Settings = {
 export const DEFAULT_SETTINGS: Settings = { owners: [], rateCny: null, rateUsd: null, markupPct: 30, cargoUsdPerKg: 7, roundTo: 1000 };
 
 export type ItemRow = { goods_id: string; raw: any; ai: any | null; weight_kg: number | null; fetched_at: string };
+export type Shot = { chat_id: number; message_id: number; file_id: string; caption: string };
 export interface Store {
   getSettings(): Promise<Settings>;
   saveSettings(s: Settings): Promise<void>;
   getItem(goodsId: string): Promise<ItemRow | null>;
   saveItem(row: ItemRow): Promise<void>;
+  addShot(shot: Shot): Promise<void>;
+  // Отдаёт и помечает обработанными все свежие скриншоты чата, если messageId — последний из них; иначе null
+  takeShots(chatId: number, messageId: number): Promise<Shot[] | null>;
 }
 export type Deps = {
   token: string;
   tmapiKey: string;
   geminiKey: string;
   geminiModels?: string[];
+  visionModels?: string[];
+  shotWaitMs?: number;
   store: Store;
   fetch?: typeof fetch;
   log?: (...a: unknown[]) => void;
 };
 
 export const GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash"];
+// Для скриншотов важнее точность цифр, поэтому сначала полная модель
+export const VISION_MODELS = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
+const SHOT_WAIT_MS = 3500;
+const SHOT_ID_BASE = 90_000_000_000_000; // id карточек со скриншотов, не пересекаются с goods_id Пиндодо
 const ITEM_TTL_MS = 6 * 3600_000;
 const RATE_TTL_MS = 6 * 3600_000;
 const MAX_VARIANT_LINES = 40;
@@ -97,7 +107,7 @@ export async function fetchItem(goodsId: string, apiKey: string, f: typeof fetch
   if (!json) throw new UserError(`TMAPI вернул ошибку HTTP ${res.status}.`);
   if (json.code === 200 && json.data) return json.data;
   const msg = String(json.msg || json.message || "");
-  if (json.code === 4393 || /quota/i.test(msg)) throw new UserError("TMAPI: закончилась квота на ключе (insufficient quota). Пополните баланс в console.tmapi.io или попросите у их поддержки тестовые запросы.");
+  if (json.code === 4393 || /quota/i.test(msg)) throw new UserError("TMAPI: закончилась квота на ключе (insufficient quota). Пришлите 2–3 скриншота товара из приложения — посчитаю по ним.");
   if (/key|auth/i.test(msg) || res.status === 401 || res.status === 403) throw new UserError(`TMAPI не принял ключ: ${msg || res.status}.`);
   throw new UserError(`TMAPI: ${msg || "ошибка"} (код ${json.code ?? res.status}). Возможно, товар снят с продажи.`);
 }
@@ -233,6 +243,108 @@ export async function aiCard(raw: any, apiKey: string, models = GEMINI_MODELS, f
   return null;
 }
 
+// ---------- скриншоты ----------
+const SHOT_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    title_cn: { type: "STRING", description: "Название товара как на скриншоте (по-китайски)" },
+    title: AI_SCHEMA.properties.title,
+    description: AI_SCHEMA.properties.description,
+    category: AI_SCHEMA.properties.category,
+    specs: AI_SCHEMA.properties.specs,
+    variant_dim: { type: "STRING", description: "Название измерения, от которого зависит цена (Цвет, Модель, Комплект…), по-русски" },
+    variants: {
+      type: "ARRAY", description: "Варианты, от которых зависит цена; если цена одна — один элемент",
+      items: { type: "OBJECT", properties: {
+        name: { type: "STRING", description: "Название варианта по-русски" },
+        yuan: { type: "NUMBER", description: "Цена за совместную покупку (拼单价) в юанях, ровно как на скриншоте; 0 если не видна" },
+        available: { type: "BOOLEAN", description: "false, если помечено 缺货/已售罄/无货" },
+      }, required: ["name", "yuan", "available"] },
+    },
+    options: {
+      type: "ARRAY", description: "Прочие выборы, не влияющие на цену (например, все размеры)",
+      items: { type: "OBJECT", properties: { name: { type: "STRING" }, values: { type: "ARRAY", items: { type: "STRING" } } }, required: ["name", "values"] },
+    },
+    china_shipping_yuan: { type: "NUMBER", description: "Платная доставка по Китаю в юанях; 0 если 免运费/包邮 или не указано" },
+    weight_kg: AI_SCHEMA.properties.weight_kg,
+    notes: AI_SCHEMA.properties.notes,
+    missing: { type: "STRING", description: "Чего не хватает на скриншотах для точной цены (пусто, если всего хватает)" },
+  },
+  required: ["title_cn", "title", "description", "category", "specs", "variant_dim", "variants", "options", "china_shipping_yuan", "weight_kg", "notes", "missing"],
+};
+
+const SHOT_PROMPT = `${AI_PROMPT}
+
+Сейчас на входе не JSON, а скриншоты карточки товара из приложения Pinduoduo (главный экран, окно выбора варианта, характеристики — в любом порядке).
+Цены:
+- Бери цену совместной покупки (拼单价, «发起拼单», крупная красная цена), а не 单独购买 и не зачёркнутую старую.
+- Если в окне выбора у вариантов свои цены — перечисли каждый вариант со своей ценой.
+- Если видна только вилка «¥A-¥B» без привязки к вариантам — один вариант «Базовая цена» с минимальной ценой и напиши в missing, что нужен скриншот окна выбора с ценами.
+- Цифры переписывай точно, ничего не округляй и не придумывай.
+- «起» после цены значит «от».
+Размеры, не влияющие на цену, — в options. Подсказки вроде 偏小一码 — в notes (по-русски).`;
+
+export function bytesToBase64(bytes: Uint8Array) {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+export async function readShots(images: { mime: string; data: string }[], apiKey: string, models = VISION_MODELS, f: typeof fetch = fetch, log?: Deps["log"]) {
+  if (!apiKey) throw new UserError("Не задан ключ Gemini.");
+  if (!models?.length) models = VISION_MODELS;
+  const body = JSON.stringify({
+    systemInstruction: { parts: [{ text: SHOT_PROMPT }] },
+    contents: [{ role: "user", parts: [...images.map(i => ({ inline_data: { mime_type: i.mime, data: i.data } })), { text: "Скриншоты товара. Подготовь карточку." }] }],
+    generationConfig: { responseMimeType: "application/json", responseSchema: SHOT_SCHEMA, temperature: 0.1 },
+  });
+  for (const model of models) {
+    try {
+      const res = await f(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": apiKey }, body,
+        signal: AbortSignal.timeout(60000),
+      });
+      const json: any = await res.json();
+      const text = json?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || "").join("");
+      if (!res.ok || !text) { log?.("vision", model, res.status, JSON.stringify(json?.error || json).slice(0, 300)); continue; }
+      const card = JSON.parse(text);
+      if (card?.title) return { ...shotToItem(card), model };
+    } catch (e) { log?.("vision", model, String(e)); }
+  }
+  return null;
+}
+
+// Ответ модели → та же пара raw/ai, что даёт TMAPI + aiCard, чтобы карточка и пересчёт работали одинаково
+export function shotToItem(card: any) {
+  const variants = (card.variants || []).filter((v: any) => v?.name);
+  const raw = {
+    source: "screenshot",
+    title: card.title_cn || card.title,
+    fare: String(Number(card.china_shipping_yuan) || 0),
+    main_imgs: [],
+    product_props: [],
+    skus: variants.map((v: any) => ({
+      props_names: `Вариант:${v.name}`,
+      sale_price: String(Number(v.yuan) || 0),
+      stock: v.available === false ? 0 : 1,
+      status: 1,
+    })),
+  };
+  const options = (card.options || []).filter((o: any) => o?.name && o.values?.length);
+  const soldOut = variants.filter((v: any) => v.available === false && !(Number(v.yuan) > 0)).map((v: any) => v.name);
+  const ai = {
+    title: card.title,
+    description: card.description,
+    category: card.category,
+    specs: [...(card.specs || []), ...options.map((o: any) => ({ name: o.name, value: o.values.join(", ") }))],
+    dims: [{ cn: "Вариант", ru: card.variant_dim || "Вариант" }],
+    values: [],
+    weight_kg: card.weight_kg,
+    notes: [...(card.notes || []), ...(soldOut.length ? [`Нет в наличии: ${soldOut.join(", ")}`] : []), ...(card.missing ? [card.missing] : [])],
+  };
+  return { raw, ai };
+}
+
 // ---------- карточка ----------
 const esc = (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -303,18 +415,25 @@ export function renderCard(row: ItemRow, s: Settings, rates: { cny: number; usd:
   }
   lines.push(`Вес ~${w.kg} кг (${w.manual ? "задан вами" : "guess" in w ? "по умолчанию" : "оценка ИИ"}) — ответьте на карточку «вес 1.2», чтобы поправить.`);
   lines.push(`Курс: ${esc(rates.source)}`);
-  lines.push(`Пиндодо ID: <code>${esc(row.goods_id)}</code>`);
+  if (raw?.source === "screenshot") lines.push("📸 Цены прочитаны со скриншотов — сверьте ¥ с приложением.");
+  lines.push(`${isShotId(row.goods_id) ? "ID карточки" : "Пиндодо ID"}: <code>${esc(row.goods_id)}</code>`);
   let text = lines.join("\n");
   if (text.length > 4000) text = text.slice(0, 3990) + "…";
   return text;
 }
 
+export function isShotId(id: string) {
+  return Number(id) >= SHOT_ID_BASE;
+}
+
 export function cardButtons(row: ItemRow) {
   const id = row.goods_id;
   const first = [{ text: "🔁 Пересчитать", callback_data: `re:${id}` }, { text: "🇨🇳 Оригинал", callback_data: `cn:${id}` }];
-  const second: any[] = [{ text: "🔗 Открыть в Пиндодо", url: pddUrl(id) }];
+  const second: any[] = [];
+  const pddId = isShotId(id) ? row.raw?.item_id : id;
+  if (pddId) second.push({ text: "🔗 Открыть в Пиндодо", url: pddUrl(String(pddId)) });
   if (row.raw?.video_url) second.unshift({ text: "🎬 Видео", callback_data: `vid:${id}` });
-  return { inline_keyboard: [first, second] };
+  return { inline_keyboard: second.length ? [first, second] : [first] };
 }
 
 export function originalText(row: ItemRow) {
@@ -411,7 +530,49 @@ export function createBot(deps: Deps) {
     }
   }
 
+  async function downloadShot(fileId: string) {
+    const info = await tg("getFile", { file_id: fileId });
+    const path = info?.result?.file_path;
+    if (!path) throw new UserError("Не смог скачать скриншот из Telegram. Отправьте ещё раз.");
+    const res = await f(`https://api.telegram.org/file/bot${deps.token}/${path}`, { signal: AbortSignal.timeout(20000) });
+    if (!res.ok) throw new UserError("Не смог скачать скриншот из Telegram. Отправьте ещё раз.");
+    const mime = /\.png$/i.test(path) ? "image/png" : /\.webp$/i.test(path) ? "image/webp" : "image/jpeg";
+    return { mime, data: bytesToBase64(new Uint8Array(await res.arrayBuffer())) };
+  }
+
+  async function processShots(msg: any, fileId: string, s: Settings) {
+    const chat = msg.chat.id;
+    await deps.store.addShot({ chat_id: chat, message_id: msg.message_id, file_id: fileId, caption: msg.caption || "" });
+    // Альбом приходит отдельными сообщениями: ждём остальные, обрабатывает последнее
+    await new Promise(r => setTimeout(r, deps.shotWaitMs ?? SHOT_WAIT_MS));
+    const shots = await deps.store.takeShots(chat, msg.message_id);
+    if (!shots?.length) return;
+    const used = shots.slice(-6);
+    const wait = await say(chat, used.length === 1 ? "⏳ Читаю скриншот…" : `⏳ Читаю скриншоты (${used.length})…`);
+    try {
+      const images = await Promise.all(used.map(sh => downloadShot(sh.file_id)));
+      let pddId: string | null = null;
+      const ref = findRefs(shots.map(sh => sh.caption).join(" "))[0];
+      if (ref) pddId = ref.goodsId || await resolveGoodsId(ref.url!, f).catch(() => null);
+      const res = await readShots(images, deps.geminiKey, deps.visionModels, f, log);
+      if (!res) throw new UserError("Gemini не ответил. Отправьте скриншоты ещё раз через минуту.");
+      if (!res.raw.skus.some((k: any) => Number(k.sale_price) > 0)) throw new UserError("Не вижу цену на скриншотах. Пришлите главный экран товара и окно выбора варианта.");
+      const raw: any = { ...res.raw, item_id: pddId || undefined };
+      const row: ItemRow = { goods_id: String(SHOT_ID_BASE + Date.now()), raw, ai: { ...res.ai, model: res.model }, weight_kg: null, fetched_at: new Date().toISOString() };
+      await deps.store.saveItem(row);
+      await sendCard(chat, row, s, false);
+    } catch (e) {
+      log("shots", String(e));
+      await say(chat, e instanceof UserError ? `❗️ ${esc(e.message)}` : "❗️ Не получилось прочитать скриншоты. Попробуйте ещё раз.");
+    } finally {
+      if (wait?.result?.message_id) await tg("deleteMessage", { chat_id: chat, message_id: wait.result.message_id });
+    }
+  }
+
   const HELP = `Пришлите ссылку на товар из Пиндодо («Поделиться → Скопировать ссылку») — верну фото и готовую карточку с ценой в сумах.
+
+<b>Без ссылки — по скриншотам</b>
+Отправьте одним альбомом 2–3 скриншота из приложения: главный экран (фото, название, цена) и окно выбора цвета/размера с ценами. Можно добавить ссылку в подпись.
 
 <b>Настройки цены</b>
 /rate 1780 — курс юаня (сум за ¥1), /rate auto — курс ЦБ
@@ -502,7 +663,7 @@ export function createBot(deps: Deps) {
 
   async function weightReply(chat: number, msg: any, s: Settings) {
     const m = String(msg.text).match(/^\s*(?:вес\s*)?(\d+(?:[.,]\d+)?)\s*(кг|г)?\s*$/i);
-    const idMatch = String(msg.reply_to_message?.text || "").match(/Пиндодо ID:\s*(\d{6,15})/);
+    const idMatch = String(msg.reply_to_message?.text || "").match(/(?:Пиндодо ID|ID карточки):\s*(\d{6,15})/);
     if (!m || !idMatch) return false;
     let kg = Number(m[1].replace(",", "."));
     if (m[2]?.toLowerCase() === "г") kg /= 1000;
@@ -563,12 +724,14 @@ export function createBot(deps: Deps) {
     }
     try {
       if (cb) return await callback(cb, s);
+      const photoId = msg.photo?.at(-1)?.file_id || (/^image\//.test(msg.document?.mime_type || "") ? msg.document.file_id : null);
+      if (photoId) return await processShots(msg, photoId, s);
       const text: string = msg.text || msg.caption || "";
       if (!text) return say(msg.chat.id, "Пришлите ссылку на товар из Пиндодо.");
       if (msg.reply_to_message && await weightReply(msg.chat.id, msg, s)) return;
       if (text.startsWith("/")) return await command(msg.chat.id, from.id, text, s);
       const refs = findRefs(text);
-      if (!refs.length) return say(msg.chat.id, "Не вижу ссылки на Пиндодо. Пришлите ссылку из «Поделиться → Скопировать ссылку».\n\n/help — команды");
+      if (!refs.length) return say(msg.chat.id, "Не вижу ссылки на Пиндодо. Пришлите ссылку из «Поделиться → Скопировать ссылку» или 2–3 скриншота товара.\n\n/help — команды");
       for (const ref of refs.slice(0, 5)) await processLink(msg.chat.id, ref, s);
     } catch (e) {
       log("update", String(e));

@@ -26,3 +26,17 @@ create table if not exists public.pdd_bot_secrets (
 );
 alter table public.pdd_bot_secrets enable row level security;
 revoke all on public.pdd_bot_secrets from anon, authenticated;
+
+-- Скриншоты товара, ожидающие обработки (альбом Telegram приходит отдельными сообщениями).
+create table if not exists public.pdd_shots (
+  id bigint generated always as identity primary key,
+  chat_id bigint not null,
+  message_id bigint not null,
+  file_id text not null,
+  caption text not null default '',
+  processed boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists pdd_shots_pending on public.pdd_shots (chat_id, processed, created_at);
+alter table public.pdd_shots enable row level security;
+revoke all on public.pdd_shots from anon, authenticated;

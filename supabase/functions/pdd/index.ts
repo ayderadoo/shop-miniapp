@@ -34,6 +34,20 @@ const store: Store = {
   async saveItem(row) {
     await rest("pdd_imports", { method: "POST", headers: { prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify({ ...row, updated_at: new Date().toISOString() }) });
   },
+  async addShot(shot) {
+    await rest("pdd_shots", { method: "POST", headers: { prefer: "return=minimal" }, body: JSON.stringify(shot) });
+  },
+  async takeShots(chatId, messageId) {
+    const since = new Date(Date.now() - 10 * 60_000).toISOString();
+    const rows = await rest(`pdd_shots?chat_id=eq.${chatId}&processed=eq.false&created_at=gte.${since}&select=id,message_id&order=message_id.asc`);
+    if (!rows?.length || rows.at(-1).message_id !== messageId) return null;
+    const ids = rows.map((r: any) => r.id).join(",");
+    // processed=eq.false в условии: если параллельный вызов уже забрал строки, сюда они не попадут
+    const taken = await rest(`pdd_shots?id=in.(${ids})&processed=eq.false&select=chat_id,message_id,file_id,caption`, {
+      method: "PATCH", headers: { prefer: "return=representation" }, body: JSON.stringify({ processed: true }),
+    });
+    return taken?.length ? taken.sort((a: any, b: any) => a.message_id - b.message_id) : null;
+  },
 };
 
 let cached: { at: number; token: string; bot: ReturnType<typeof createBot>; secret: string } | null = null;
@@ -48,6 +62,7 @@ async function getBot() {
     tmapiKey: key("TMAPI_KEY"),
     geminiKey: key("GEMINI_API_KEY"),
     geminiModels: key("GEMINI_MODELS").split(",").map(s => s.trim()).filter(Boolean),
+    visionModels: key("GEMINI_VISION_MODELS").split(",").map(s => s.trim()).filter(Boolean),
     store,
     log: (...a) => console.log(...a),
   });
