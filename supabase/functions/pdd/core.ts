@@ -29,6 +29,8 @@ export type Deps = {
   geminiKey: string;
   geminiModels?: string[];
   visionModels?: string[];
+  imageModels?: string[];      // рисование фото (в Gemini только на платном тарифе); без них — вырезка со скриншота
+  makePhoto?: (shot: Uint8Array, box: number[]) => Promise<Uint8Array | null>; // оформление вырезки в стиле RAMP (photo.ts)
   shotWaitMs?: number;
   store: Store;
   fetch?: typeof fetch;
@@ -38,6 +40,7 @@ export type Deps = {
 export const GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash"];
 // Для скриншотов важнее точность цифр, поэтому сначала полная модель
 export const VISION_MODELS = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
+export const IMAGE_MODELS = ["gemini-3.1-flash-image"];
 const SHOT_WAIT_MS = 3500;
 const SHOT_ID_BASE = 90_000_000_000_000; // id карточек со скриншотов, не пересекаются с goods_id Пиндодо
 const ITEM_TTL_MS = 6 * 3600_000;
@@ -145,10 +148,11 @@ export async function currentRates(s: Settings, f: typeof fetch = fetch) {
 }
 
 // ---------- цены ----------
+// Наценка — только на товар, карго добавляется сверху: ¥ × курс × (1 + наценка) + вес × $/кг × курс $
 export function priceUzs(yuan: number, weightKg: number, rates: { cny: number; usd: number }, s: Settings) {
-  const cost = yuan * rates.cny + weightKg * s.cargoUsdPerKg * rates.usd;
+  const goods = yuan * rates.cny, cargo = weightKg * s.cargoUsdPerKg * rates.usd;
   const step = s.roundTo > 0 ? s.roundTo : 1;
-  return { cost: Math.round(cost), price: Math.ceil(cost * (1 + s.markupPct / 100) / step) * step };
+  return { cost: Math.round(goods + cargo), cargo: Math.round(cargo), price: Math.ceil((goods * (1 + s.markupPct / 100) + cargo) / step) * step };
 }
 
 export function fmtSum(n: number) {
@@ -187,20 +191,27 @@ const AI_SCHEMA = {
     specs: { type: "ARRAY", items: { type: "OBJECT", properties: { name: { type: "STRING" }, value: { type: "STRING" } }, required: ["name", "value"] } },
     dims: { type: "ARRAY", description: "Перевод названий измерений вариантов", items: { type: "OBJECT", properties: { cn: { type: "STRING" }, ru: { type: "STRING" } }, required: ["cn", "ru"] } },
     values: { type: "ARRAY", description: "Перевод КАЖДОГО значения варианта", items: { type: "OBJECT", properties: { cn: { type: "STRING" }, ru: { type: "STRING" } }, required: ["cn", "ru"] } },
-    weight_kg: { type: "NUMBER", description: "Оценка веса одной единицы в упаковке, кг" },
+    material: { type: "STRING", description: "Материал(ы) по-русски; пусто, если не указан" },
+    dimensions: { type: "STRING", description: "Размеры/габариты с единицами (см, мм) или размерная сетка; пусто, если не указаны" },
+    capacity: { type: "STRING", description: "Объём, ёмкость, память, мощность и т.п. с единицами; пусто, если неприменимо" },
+    package: { type: "STRING", description: "Комплектация: что входит в набор, сколько штук; пусто, если не указано" },
+    weight_kg: { type: "NUMBER", description: "Максимально возможный вес одной единицы с упаковкой (для самого тяжёлого варианта), кг, округлено вверх до 0.1" },
     notes: { type: "ARRAY", items: { type: "STRING" }, description: "Заметки байера: риски и важное для покупателя из Узбекистана" },
   },
-  required: ["title", "description", "category", "specs", "dims", "values", "weight_kg", "notes"],
+  required: ["title", "description", "category", "specs", "dims", "values", "material", "dimensions", "capacity", "package", "weight_kg", "notes"],
 };
 
 const AI_PROMPT = `Ты — помощник байера магазина в Узбекистане, который возит товары с Pinduoduo.
-По данным товара (JSON) подготовь карточку на грамотном русском языке.
+По данным товара (JSON) подготовь карточку на грамотном русском языке для магазина RAMP.
+Стиль магазина RAMP: дружелюбно, коротко и по делу, на «вы». Описание — 2–4 предложения: что это, чем удобно, для кого. Без эмодзи, без капса и восклицательных знаков подряд.
 Правила:
-- Убери китайский маркетинговый мусор: «взрыв», «фабрика напрямую», «новинка 2026», «хит», «оригинал», «субсидия», «бесплатная доставка», бренды-пустышки и т.п.
+- Название по-русски; латиница только для бренда и стандартов (USB, Type-C, Bluetooth). Без слов «новинка», «хит», «официальный», «оригинал».
+- Убери китайский маркетинговый мусор: «взрыв», «фабрика напрямую», «новинка 2026», «хит», «оригинал», «субсидия», «бесплатная доставка», бренды-пустышки и т.п. Никогда не упоминай Китай, Pinduoduo, фабрики, акции, распродажи (11.11, 百亿补贴), продажи, отзывы, доставку и возвраты маркетплейса.
 - Технические термины переводи точно (материал, мощность, размеры, ёмкость, напряжение).
 - specs: 3–8 полезных характеристик. Не включай «место происхождения», «место отправки», «бренд», если бренд неизвестный.
 - dims/values: переведи названия измерений вариантов и каждое значение кратко (цвет, размер, комплектация). Размеры одежды (S/M/L/XL) оставь как есть, добавь ростовку, если она указана.
-- weight_kg: реалистичная оценка веса одной штуки с упаковкой.
+- material, dimensions, capacity, package: заполняй из данных и по фото; если в данных нет — пустая строка, не выдумывай цифры.
+- weight_kg: МАКСИМАЛЬНО возможный вес одной штуки с упаковкой для самого тяжёлого варианта (лучше с запасом, чем меньше): по размерам и материалу, округли вверх до 0.1 кг. Карго считается по нему.
 - notes: 0–4 коротких предупреждения, только если реально важно: китайская вилка/220 В, продаётся упаковкой/набором (сколько штук), размеры маломерят (китайская сетка), предзаказ, нужен китайский аккаунт/приложение, хрупкое, жидкость/батарейки (ограничения карго), разные варианты сильно отличаются. Без общих фраз.
 Не выдумывай характеристики, которых нет в данных.`;
 
@@ -266,11 +277,23 @@ const SHOT_SCHEMA = {
       items: { type: "OBJECT", properties: { name: { type: "STRING" }, values: { type: "ARRAY", items: { type: "STRING" } } }, required: ["name", "values"] },
     },
     china_shipping_yuan: { type: "NUMBER", description: "Платная доставка по Китаю в юанях; 0 если 免运费/包邮 или не указано" },
+    material: AI_SCHEMA.properties.material,
+    dimensions: AI_SCHEMA.properties.dimensions,
+    capacity: AI_SCHEMA.properties.capacity,
+    package: AI_SCHEMA.properties.package,
+    photo: {
+      type: "OBJECT", description: "Где на скриншотах лучшее фото самого товара",
+      properties: {
+        shot: { type: "INTEGER", description: "Номер скриншота с самым крупным и чистым фото товара, с 0" },
+        box_2d: { type: "ARRAY", items: { type: "NUMBER" }, description: "[ymin, xmin, ymax, xmax] в долях 0–1000 плотно вокруг самого товара; лучше чуть обрезать фон, чем захватить надписи, цены, баннеры или интерфейс" },
+      },
+      required: ["shot", "box_2d"],
+    },
     weight_kg: AI_SCHEMA.properties.weight_kg,
     notes: AI_SCHEMA.properties.notes,
     missing: { type: "STRING", description: "Чего не хватает на скриншотах для точной цены (пусто, если всего хватает)" },
   },
-  required: ["title_cn", "title", "description", "category", "specs", "variant_dim", "variants", "options", "china_shipping_yuan", "weight_kg", "notes", "missing"],
+  required: ["title_cn", "title", "description", "category", "specs", "variant_dim", "variants", "options", "china_shipping_yuan", "material", "dimensions", "capacity", "package", "photo", "weight_kg", "notes", "missing"],
 };
 
 const SHOT_PROMPT = `${AI_PROMPT}
@@ -282,7 +305,8 @@ const SHOT_PROMPT = `${AI_PROMPT}
 - Если видна только вилка «¥A-¥B» без привязки к вариантам — один вариант «Базовая цена» с минимальной ценой и напиши в missing, что нужен скриншот окна выбора с ценами.
 - Цифры переписывай точно, ничего не округляй и не придумывай.
 - «起» после цены значит «от».
-Размеры, не влияющие на цену, — в options. Подсказки вроде 偏小一码 — в notes (по-русски).`;
+Размеры, не влияющие на цену, — в options. Подсказки вроде 偏小一码 — в notes (по-русски).
+Адрес доставки, имя и телефон покупателя на скриншотах — игнорируй, никуда не переписывай.`;
 
 export function bytesToBase64(bytes: Uint8Array) {
   let bin = "";
@@ -314,12 +338,46 @@ export async function readShots(images: { mime: string; data: string }[], apiKey
   return null;
 }
 
+const PHOTO_PROMPT = `Product photo for the online shop RAMP. Take the product shown in the screenshots and create a clean e-commerce photo of exactly this product: same shape, colors, materials and details; do not invent or change the product.
+Style: soft studio light, light background #F3F5FB with a subtle diagonal accent in azure #2B3FD6 and turquoise #19C3C9, gentle shadow, product centered, square.
+Strictly no text, no Chinese characters, no marketplace logos, no prices, no stickers, no people, no phone interface.`;
+let imageOffUntil = 0;
+
+// Рисует фото через Gemini (нужен платный тариф). На бесплатном ключе лимит 0 — тогда час не пробуем и берём вырезку.
+export async function aiPhoto(images: { mime: string; data: string }[], apiKey: string, models = IMAGE_MODELS, f: typeof fetch = fetch, log?: Deps["log"]) {
+  if (!apiKey || !models?.length || Date.now() < imageOffUntil) return null;
+  const body = JSON.stringify({
+    contents: [{ parts: [...images.map(i => ({ inline_data: { mime_type: i.mime, data: i.data } })), { text: PHOTO_PROMPT }] }],
+    generationConfig: { responseModalities: ["IMAGE"], imageConfig: { aspectRatio: "1:1" } },
+  });
+  for (const model of models) {
+    try {
+      const res = await f(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": apiKey }, body,
+        signal: AbortSignal.timeout(60000),
+      });
+      const json: any = await res.json();
+      const part = json?.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData || p.inline_data);
+      if (part) {
+        const bin = atob((part.inlineData || part.inline_data).data);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+      }
+      log?.("photo", model, res.status, JSON.stringify(json?.error?.message || json).slice(0, 200));
+      if (res.status === 429 && /limit: 0/.test(json?.error?.message || "")) imageOffUntil = Date.now() + 3600_000;
+    } catch (e) { log?.("photo", model, String(e)); }
+  }
+  return null;
+}
+
 // Ответ модели → та же пара raw/ai, что даёт TMAPI + aiCard, чтобы карточка и пересчёт работали одинаково
 export function shotToItem(card: any) {
   const variants = (card.variants || []).filter((v: any) => v?.name);
   const raw = {
     source: "screenshot",
     title: card.title_cn || card.title,
+    photo: card.photo,
     fare: String(Number(card.china_shipping_yuan) || 0),
     main_imgs: [],
     product_props: [],
@@ -339,6 +397,7 @@ export function shotToItem(card: any) {
     specs: [...(card.specs || []), ...options.map((o: any) => ({ name: o.name, value: o.values.join(", ") }))],
     dims: [{ cn: "Вариант", ru: card.variant_dim || "Вариант" }],
     values: [],
+    material: card.material, dimensions: card.dimensions, capacity: card.capacity, package: card.package,
     weight_kg: card.weight_kg,
     notes: [...(card.notes || []), ...(soldOut.length ? [`Нет в наличии: ${soldOut.join(", ")}`] : []), ...(card.missing ? [card.missing] : [])],
   };
@@ -395,9 +454,12 @@ export function renderCard(row: ItemRow, s: Settings, rates: { cny: number; usd:
     }
     if (priced.length > MAX_VARIANT_LINES) lines.push(`…и ещё ${priced.length - MAX_VARIANT_LINES}`);
   }
-  if (ai?.specs?.length) {
+  const facts = [["Материал", ai?.material], ["Размеры", ai?.dimensions], ["Объём / ёмкость", ai?.capacity], ["Комплектация", ai?.package]]
+    .filter(([, v]) => String(v ?? "").trim()).map(([name, value]) => ({ name, value }));
+  const specs = [...facts, ...(ai?.specs || []).filter((sp: any) => !facts.some(fa => fa.name.toLowerCase() === String(sp.name).toLowerCase()))];
+  if (specs.length) {
     lines.push("", "<b>Характеристики</b>");
-    for (const sp of ai.specs.slice(0, 8)) lines.push(`• ${esc(sp.name)}: ${esc(sp.value)}`);
+    for (const sp of specs.slice(0, 12)) lines.push(`• ${esc(sp.name)}: ${esc(sp.value)}`);
   }
   const notes: string[] = [...(ai?.notes || [])];
   if (Number(raw?.fare) > 0) notes.push(`Доставка по Китаю платная: ¥${raw.fare}`);
@@ -411,9 +473,10 @@ export function renderCard(row: ItemRow, s: Settings, rates: { cny: number; usd:
   const sample = pool[0];
   lines.push("", "———");
   if (sample) {
-    lines.push(`<code>¥${sample.yuan}×${fmtSum(rates.cny)} + ${w.kg} кг×$${s.cargoUsdPerKg}×${fmtSum(rates.usd)} = ${fmtSum(sample.cost)}; +${s.markupPct}%</code>`);
+    lines.push(`<code>¥${sample.yuan}×${fmtSum(rates.cny)}×${1 + s.markupPct / 100} + ${w.kg} кг×$${s.cargoUsdPerKg}×${fmtSum(rates.usd)} = ${fmtSum(sample.price)}</code>`);
+    lines.push(`Карго в цене: ${fmtSum(sample.cargo)} сум`);
   }
-  lines.push(`Вес ~${w.kg} кг (${w.manual ? "задан вами" : "guess" in w ? "по умолчанию" : "оценка ИИ"}) — ответьте на карточку «вес 1.2», чтобы поправить.`);
+  lines.push(`Вес до ${w.kg} кг (${w.manual ? "задан вами" : "guess" in w ? "по умолчанию" : "макс. оценка ИИ"}) — ответьте на карточку «вес 1.2», чтобы поправить.`);
   lines.push(`Курс: ${esc(rates.source)}`);
   if (raw?.source === "screenshot") lines.push("📸 Цены прочитаны со скриншотов — сверьте ¥ с приложением.");
   lines.push(`${isShotId(row.goods_id) ? "ID карточки" : "Пиндодо ID"}: <code>${esc(row.goods_id)}</code>`);
@@ -537,7 +600,8 @@ export function createBot(deps: Deps) {
     const res = await f(`https://api.telegram.org/file/bot${deps.token}/${path}`, { signal: AbortSignal.timeout(20000) });
     if (!res.ok) throw new UserError("Не смог скачать скриншот из Telegram. Отправьте ещё раз.");
     const mime = /\.png$/i.test(path) ? "image/png" : /\.webp$/i.test(path) ? "image/webp" : "image/jpeg";
-    return { mime, data: bytesToBase64(new Uint8Array(await res.arrayBuffer())) };
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    return { mime, bytes, data: bytesToBase64(bytes) };
   }
 
   async function processShots(msg: any, fileId: string, s: Settings) {
@@ -554,11 +618,25 @@ export function createBot(deps: Deps) {
       let pddId: string | null = null;
       const ref = findRefs(shots.map(sh => sh.caption).join(" "))[0];
       if (ref) pddId = ref.goodsId || await resolveGoodsId(ref.url!, f).catch(() => null);
+      const drawn = aiPhoto(images, deps.geminiKey, deps.imageModels, f, log);
       const res = await readShots(images, deps.geminiKey, deps.visionModels, f, log);
       if (!res) throw new UserError("Gemini не ответил. Отправьте скриншоты ещё раз через минуту.");
       if (!res.raw.skus.some((k: any) => Number(k.sale_price) > 0)) throw new UserError("Не вижу цену на скриншотах. Пришлите главный экран товара и окно выбора варианта.");
       const raw: any = { ...res.raw, item_id: pddId || undefined };
       const row: ItemRow = { goods_id: String(SHOT_ID_BASE + Date.now()), raw, ai: { ...res.ai, model: res.model }, weight_kg: null, fetched_at: new Date().toISOString() };
+      let photo = await drawn;
+      const box = res.raw.photo;
+      if (!photo && deps.makePhoto && Array.isArray(box?.box_2d) && box.box_2d.length === 4) {
+        const shot = images[Math.min(Math.max(0, Number(box.shot) || 0), images.length - 1)];
+        photo = await deps.makePhoto(shot.bytes, box.box_2d).catch(e => { log("makePhoto", String(e)); return null; });
+      }
+      if (photo) {
+        const form = new FormData();
+        form.set("chat_id", String(chat));
+        form.set("photo", new Blob([photo], { type: "image/jpeg" }), "ramp.jpg");
+        const sent = await tg("sendPhoto", form);
+        row.raw.photo_file_id = sent?.result?.photo?.at(-1)?.file_id;
+      }
       await deps.store.saveItem(row);
       await sendCard(chat, row, s, false);
     } catch (e) {
@@ -598,7 +676,7 @@ export function createBot(deps: Deps) {
 Карго: $${s.cargoUsdPerKg} за кг
 Округление: до ${fmtSum(s.roundTo)} сум
 
-Формула: (цена ¥ × курс ¥ + вес × карго × курс $) × (1 + наценка)`;
+Формула: цена ¥ × курс ¥ × (1 + наценка) + вес × карго × курс $`;
   }
 
   function num(arg: string) {

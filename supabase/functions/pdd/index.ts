@@ -1,6 +1,7 @@
 // Вебхук бота-импортёра Пиндодо. Ключи PDD_BOT_TOKEN, TMAPI_KEY, GEMINI_API_KEY: env (если задан) или закрытая таблица pdd_bot_secrets.
 // Деплой: supabase functions deploy pdd --project-ref wtfeujuyklteisnrqksl --no-verify-jwt
 import { createBot, DEFAULT_SETTINGS, type ItemRow, type Settings, type Store, webhookSecret } from "./core.ts";
+import { brandPhoto } from "./photo.ts";
 
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
 
@@ -56,13 +57,17 @@ async function getBot() {
   if (cached && Date.now() - cached.at < 300_000) return cached;
   const rows: { name: string; value: string }[] = await rest("pdd_bot_secrets?select=name,value");
   const key = (name: string) => Deno.env.get(name) || rows.find(r => r.name === name)?.value || "";
+  // Пустое значение = список моделей по умолчанию из core.ts
+  const models = (name: string) => { const l = key(name).split(",").map(s => s.trim()).filter(Boolean); return l.length ? l : undefined; };
   const token = key("PDD_BOT_TOKEN");
   const bot = createBot({
     token,
     tmapiKey: key("TMAPI_KEY"),
     geminiKey: key("GEMINI_API_KEY"),
-    geminiModels: key("GEMINI_MODELS").split(",").map(s => s.trim()).filter(Boolean),
-    visionModels: key("GEMINI_VISION_MODELS").split(",").map(s => s.trim()).filter(Boolean),
+    geminiModels: models("GEMINI_MODELS"),
+    visionModels: models("GEMINI_VISION_MODELS"),
+    imageModels: models("GEMINI_IMAGE_MODELS"),
+    makePhoto: brandPhoto,
     store,
     log: (...a) => console.log(...a),
   });

@@ -30,8 +30,8 @@ test('TMAPI quota error is explained to the owner', async () => {
 
 test('price formula: yuan, cargo by weight, markup, rounding up', () => {
  const s = { ...DEFAULT_SETTINGS, markupPct: 30, cargoUsdPerKg: 7, roundTo: 1000 };
- const r = priceUzs(100, 1, rates, s); // 178000 + 84000 = 262000 → ×1.3 = 340600
- assert.deepEqual(r, { cost: 262000, price: 341000 });
+ const r = priceUzs(100, 1, rates, s); // 178000 × 1.3 = 231400, + карго 84000 = 315400 → вверх до 316000
+ assert.deepEqual(r, { cost: 262000, cargo: 84000, price: 316000 });
  const { dims, skus } = parseSkus(item);
  assert.deepEqual(dims, ['型号', '套餐']);
  assert.equal(skus.length, 6);
@@ -54,7 +54,8 @@ test('card shows translated grouped variants and prices; works without AI', () =
 
 const SHOT_CARD = { title_cn: '男士运动鞋', title: 'Кроссовки мужские', description: 'd', category: 'Обувь', specs: [{ name: 'Подошва', value: 'ЭВА' }], variant_dim: 'Цвет',
  variants: [{ name: 'Чёрный', yuan: 39.9, available: true }, { name: 'Серо-голубой', yuan: 45.9, available: true }, { name: 'Хаки', yuan: 0, available: false }],
- options: [{ name: 'Размер', values: ['39', '40', '41'] }], china_shipping_yuan: 0, weight_kg: 0.8, notes: ['Маломерят'], missing: '' };
+ options: [{ name: 'Размер', values: ['39', '40', '41'] }], china_shipping_yuan: 0, material: 'Сетка, ЭВА', dimensions: '', capacity: '', package: '1 пара',
+ photo: { shot: 1, box_2d: [100, 100, 600, 900] }, weight_kg: 0.8, notes: ['Маломерят'], missing: '' };
 
 function harness() {
  const sent = [], items = {}; let settings = {}, shots = [];
@@ -64,27 +65,31 @@ function harness() {
   addShot: async sh => { shots.push(sh); },
   takeShots: async (chat, mid) => { const mine = shots.filter(x => x.chat_id === chat); if (!mine.length || mine.at(-1).message_id !== mid) return null; shots = shots.filter(x => x.chat_id !== chat); return mine; },
  };
- const visionBodies = [];
+ const visionBodies = [], photos = []; let imageCalls = 0;
  let tmapiCalls = 0;
  const f = async (url, init = {}) => {
   url = String(url);
   if (url.startsWith('https://api.telegram.org/file/')) return new Response(new Uint8Array([1, 2, 3]));
   if (url.startsWith('https://api.telegram.org/')) {
-   const method = url.split('/').pop(); const body = JSON.parse(init.body);
+   const method = url.split('/').pop();
+   const body = init.body instanceof FormData ? Object.fromEntries(init.body.entries()) : JSON.parse(init.body);
    sent.push({ method, ...body });
+   if (method === 'sendPhoto') return json({ ok: true, result: { message_id: sent.length, photo: [{ file_id: 'small' }, { file_id: 'ramp-photo' }] } });
    if (method === 'getFile') return json({ ok: true, result: { file_path: `photos/${body.file_id}.jpg` } });
    return json({ ok: true, result: { message_id: sent.length } });
   }
   if (url.includes('yangkeduo.com')) return new Response('', { status: 307, headers: { location: 'https://mobile.yangkeduo.com/goods2.html?goods_id=99215544343' } });
   if (url.includes('api.tmapi.top')) { tmapiCalls++; return json({ code: 200, data: item }); }
+  if (url.includes('generativelanguage') && init.body.includes('responseModalities')) { imageCalls++; return json({ error: { message: 'Quota exceeded, limit: 0' } }, 429); }
   if (url.includes('generativelanguage') && init.body.includes('inline_data')) { visionBodies.push(JSON.parse(init.body)); return json({ candidates: [{ content: { parts: [{ text: JSON.stringify(SHOT_CARD) }] } }] }); }
   if (url.includes('generativelanguage')) return json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ title: 'Рубанок', description: 'd', category: 'c', specs: [], dims: [], values: [], weight_kg: 2, notes: [] }) }] } }] });
   if (url.includes('cbu.uz')) return json([{ Rate: url.includes('CNY') ? '1780.00' : '12000.00', Date: '23.10.2026' }]);
   throw new Error('unexpected ' + url);
  };
- const bot = createBot({ token: 'T', tmapiKey: 'k', geminiKey: 'g', store, fetch: f, shotWaitMs: 20 });
+ const makePhoto = async (bytes, box) => { photos.push({ bytes, box }); return new Uint8Array([9, 9]); };
+ const bot = createBot({ token: 'T', tmapiKey: 'k', geminiKey: 'g', store, fetch: f, shotWaitMs: 20, makePhoto });
  const msg = (id, text, extra = {}) => bot.handleUpdate({ message: { message_id: 1, from: { id }, chat: { id, type: 'private' }, text, ...extra } });
- return { bot, sent, items, msg, visionBodies, get settings() { return settings; }, get tmapiCalls() { return tmapiCalls; } };
+ return { bot, sent, items, msg, visionBodies, photos, get imageCalls() { return imageCalls; }, get settings() { return settings; }, get tmapiCalls() { return tmapiCalls; } };
 }
 
 test('bot: first /start claims ownership, strangers are refused', async () => {
@@ -107,7 +112,7 @@ test('bot: link → photos + card; settings commands; weight reply edits the car
  assert.ok(h.sent.some(m => m.method === 'sendMediaGroup' && m.media.length === 8));
  const card = h.sent.findLast(m => m.method === 'sendMessage');
  assert.match(card.text, /<b>Рубанок<\/b>/);
- assert.match(card.text, /\+50%/);
+ assert.match(card.text, /×1\.5 \+ /);
  assert.equal(card.reply_markup.inline_keyboard[0][0].callback_data, 're:99215544343');
  assert.ok(h.sent.some(m => m.method === 'deleteMessage'));
  await h.msg(5, 'вес 1,5', { reply_to_message: { message_id: 42, text: card.text.replace(/<[^>]+>/g, '') } });
@@ -147,4 +152,12 @@ test('bot: album of screenshots → one recognition call → one priced card', a
  await h.msg(5, 'вес 2', { reply_to_message: { message_id: 50, text: card.text.replace(/<[^>]+>/g, '') } });
  assert.equal(h.items[id].weight_kg, 2);
  assert.ok(!h.sent.some(m => m.method === 'sendMediaGroup'));
+ assert.equal(h.imageCalls, 1, 'paid drawing tried once, then crop');
+ assert.deepEqual(h.photos.map(p => p.box), [[100, 100, 600, 900]]);
+ assert.ok(h.sent.findIndex(m => m.method === 'sendPhoto') < h.sent.indexOf(card), 'branded photo goes before the card');
+ assert.equal(h.items[id].raw.photo_file_id, 'ramp-photo');
+ assert.match(card.text, /• Материал: Сетка, ЭВА/);
+ assert.match(card.text, /• Комплектация: 1 пара/);
+ assert.doesNotMatch(card.text, /Размеры: \n/);
+ assert.match(card.text, /Карго в цене: [\d ]+ сум/);
 });
