@@ -1,3 +1,18 @@
+# Бот-импортёр Пиндодо (@iouyoterbot) — 23.10.2026
+
+Отдельный закрытый бот байера: ссылка из Пиндодо → фото + карточка на русском с ценой в сумах.
+
+- Код: `supabase/functions/pdd/` (`core.ts` — вся логика, `index.ts` — вебхук Supabase), миграция `20261023100000_pdd_import_bot.sql`, тесты `tests/pdd.test.mjs`.
+- Цепочка: короткая ссылка `?ps=` распаковывается по редиректу 307 (вход не нужен) → `goods_id` → TMAPI `GET http://api.tmapi.top/pdd/item_detail?item_id=` (заголовок `apikey`) → Gemini (`gemini-3.5-flash`, при перегрузке `gemini-flash-latest`, `gemini-flash-lite-latest`) переводит и чистит текст, оценивает вес, пишет заметку байера → цена считается кодом, не ИИ.
+- Формула: `(¥ × курс юаня + вес кг × карго $/кг × курс $) × (1 + наценка)`, округление вверх. По умолчанию курс ЦБ (cbu.uz, резерв open.er-api.com), наценка 30%, карго $7/кг, округление 1000. Команды: `/rate`, `/usd`, `/markup`, `/cargo`, `/round`, `/calc`, `/allow`, `/demo`. Ответ на карточку «вес 1.2» пересчитывает её.
+- Доступ: первый `/start` становится владельцем, остальным — по `/allow ID`.
+- Товар кэшируется 6 часов (повторная ссылка не тратит запрос TMAPI).
+- Секреты только в Supabase: `supabase secrets set PDD_BOT_TOKEN=… TMAPI_KEY=… GEMINI_API_KEY=… --project-ref wtfeujuyklteisnrqksl`, затем `supabase functions deploy pdd --project-ref wtfeujuyklteisnrqksl --no-verify-jwt` и `setWebhook` на `…/functions/v1/pdd` с `secret_token` = `webhookSecret(token)` из `core.ts`.
+- Без сервера: `PDD_BOT_TOKEN=… TMAPI_KEY=… GEMINI_API_KEY=… node scripts/pdd_bot_local.ts store.json` (long polling; вебхук должен быть снят).
+- Ещё не сделано: кнопка «В каталог» (черновик товара в `products`) и ответ ссылкой на заявки поиска по фото.
+
+---
+
 # RAMP — обновление 22.10.2026
 
 Исходники снова модульные: `index.html` и `admin.html` подключают `assets/*` (добавлены `assets/catalog.js`, `assets/catalog.css` из загруженной владельцем сборки). Однофайловая сборка для загрузки с телефона: `python scripts/build_mobile.py --output <папка> --archive <zip>` — даёт побайтово те же файлы, что владелец загружал 21.10.
