@@ -7,7 +7,8 @@
 - Формула: `(¥ × курс юаня + вес кг × карго $/кг × курс $) × (1 + наценка)`, округление вверх. По умолчанию курс ЦБ (cbu.uz, резерв open.er-api.com), наценка 30%, карго $7/кг, округление 1000. Команды: `/rate`, `/usd`, `/markup`, `/cargo`, `/round`, `/calc`, `/allow`, `/demo`. Ответ на карточку «вес 1.2» пересчитывает её.
 - Доступ: первый `/start` становится владельцем, остальным — по `/allow ID`.
 - Товар кэшируется 6 часов (повторная ссылка не тратит запрос TMAPI).
-- Секреты только в Supabase: `supabase secrets set PDD_BOT_TOKEN=… TMAPI_KEY=… GEMINI_API_KEY=… --project-ref wtfeujuyklteisnrqksl`, затем `supabase functions deploy pdd --project-ref wtfeujuyklteisnrqksl --no-verify-jwt` и `setWebhook` на `…/functions/v1/pdd` с `secret_token` = `webhookSecret(token)` из `core.ts`.
+- **Опубликовано 23.10.2026:** функция `pdd` v2, вебхук @iouyoterbot стоит на `…/functions/v1/pdd` (`secret_token` = `webhookSecret(token)` из `core.ts`), миграции `pdd_import_bot` и `pdd_bot_secrets` применены.
+- Ключи `PDD_BOT_TOKEN`, `TMAPI_KEY`, `GEMINI_API_KEY` лежат в закрытой таблице `pdd_bot_secrets` (как `settings.bot_token` основного бота); env функции, если задан, важнее. Сменить ключ: `update pdd_bot_secrets set value='…' where name='TMAPI_KEY'` (подхватывается за ≤5 минут). Новый токен бота → снова `setWebhook` с новым `secret_token`.
 - Без сервера: `PDD_BOT_TOKEN=… TMAPI_KEY=… GEMINI_API_KEY=… node scripts/pdd_bot_local.ts store.json` (long polling; вебхук должен быть снят).
 - Ещё не сделано: кнопка «В каталог» (черновик товара в `products`) и ответ ссылкой на заявки поиска по фото.
 

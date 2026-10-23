@@ -1,4 +1,4 @@
-// Вебхук бота-импортёра Пиндодо. Секреты: PDD_BOT_TOKEN, TMAPI_KEY, GEMINI_API_KEY (supabase secrets set ...).
+// Вебхук бота-импортёра Пиндодо. Ключи PDD_BOT_TOKEN, TMAPI_KEY, GEMINI_API_KEY: env (если задан) или закрытая таблица pdd_bot_secrets.
 // Деплой: supabase functions deploy pdd --project-ref wtfeujuyklteisnrqksl --no-verify-jwt
 import { createBot, DEFAULT_SETTINGS, type ItemRow, type Settings, type Store, webhookSecret } from "./core.ts";
 
@@ -6,7 +6,6 @@ declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
 const SB_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const TOKEN = Deno.env.get("PDD_BOT_TOKEN") || "";
 
 async function rest(path: string, init: RequestInit = {}) {
   const res = await fetch(`${SB_URL}/rest/v1/${path}`, {
@@ -36,18 +35,28 @@ const store: Store = {
   },
 };
 
-const bot = createBot({
-  token: TOKEN,
-  tmapiKey: Deno.env.get("TMAPI_KEY") || "",
-  geminiKey: Deno.env.get("GEMINI_API_KEY") || "",
-  geminiModels: Deno.env.get("GEMINI_MODELS")?.split(",").map(s => s.trim()).filter(Boolean),
-  store,
-  log: (...a) => console.log(...a),
-});
+let cached: { at: number; token: string; bot: ReturnType<typeof createBot>; secret: string } | null = null;
+
+async function getBot() {
+  if (cached && Date.now() - cached.at < 300_000) return cached;
+  const rows: { name: string; value: string }[] = await rest("pdd_bot_secrets?select=name,value");
+  const key = (name: string) => Deno.env.get(name) || rows.find(r => r.name === name)?.value || "";
+  const token = key("PDD_BOT_TOKEN");
+  const bot = createBot({
+    token,
+    tmapiKey: key("TMAPI_KEY"),
+    geminiKey: key("GEMINI_API_KEY"),
+    geminiModels: key("GEMINI_MODELS").split(",").map(s => s.trim()).filter(Boolean),
+    store,
+    log: (...a) => console.log(...a),
+  });
+  return cached = { at: Date.now(), token, bot, secret: token ? await webhookSecret(token) : "" };
+}
 
 Deno.serve(async (req) => {
-  if (req.method !== "POST" || !TOKEN) return new Response("ok");
-  if (req.headers.get("x-telegram-bot-api-secret-token") !== await webhookSecret(TOKEN)) return new Response("forbidden", { status: 403 });
+  if (req.method !== "POST") return new Response("ok");
+  const { bot, secret } = await getBot();
+  if (!secret || req.headers.get("x-telegram-bot-api-secret-token") !== secret) return new Response("forbidden", { status: 403 });
   const update = await req.json().catch(() => null);
   if (!update) return new Response("ok");
   // Отвечаем Telegram сразу, обработка (TMAPI + Gemini) идёт в фоне

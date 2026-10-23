@@ -18,3 +18,11 @@ create table if not exists public.pdd_imports (
 alter table public.pdd_bot_settings enable row level security;
 alter table public.pdd_imports enable row level security;
 revoke all on public.pdd_bot_settings, public.pdd_imports from anon, authenticated;
+
+-- Ключи бота (как settings.bot_token у основного бота); env функции имеет приоритет.
+create table if not exists public.pdd_bot_secrets (
+  name text primary key,
+  value text not null
+);
+alter table public.pdd_bot_secrets enable row level security;
+revoke all on public.pdd_bot_secrets from anon, authenticated;

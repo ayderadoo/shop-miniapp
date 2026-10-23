@@ -211,6 +211,7 @@ export function aiInput(raw: any) {
 
 export async function aiCard(raw: any, apiKey: string, models = GEMINI_MODELS, f: typeof fetch = fetch, log?: Deps["log"]) {
   if (!apiKey) return null;
+  if (!models?.length) models = GEMINI_MODELS;
   const body = JSON.stringify({
     systemInstruction: { parts: [{ text: AI_PROMPT }] },
     contents: [{ role: "user", parts: [{ text: JSON.stringify(aiInput(raw)) }] }],
